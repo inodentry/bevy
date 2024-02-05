@@ -1,5 +1,10 @@
-#![allow(clippy::type_complexity)]
-#![allow(clippy::all)]
+#![allow(
+    unsafe_op_in_unsafe_fn,
+    clippy::all,
+    clippy::undocumented_unsafe_blocks
+)]
+// FIXME(3492): remove once docs are ready
+#![allow(missing_docs)]
 
 use glam::{Vec2, Vec3};
 
