@@ -1,28 +1,28 @@
 use crate::{
-    core_3d::graph::SubGraph3d,
+    core_2d::graph::Core2d,
     tonemapping::{DebandDither, Tonemapping},
 };
 use bevy_ecs::prelude::*;
-use bevy_reflect::Reflect;
+use bevy_reflect::{std_traits::ReflectDefault, Reflect};
+use bevy_render::world_sync::SyncToRenderWorld;
 use bevy_render::{
     camera::{
         Camera, CameraMainTextureUsages, CameraProjection, CameraRenderGraph,
         OrthographicProjection,
     },
     extract_component::ExtractComponent,
+    prelude::Msaa,
     primitives::Frustum,
     view::VisibleEntities,
 };
 use bevy_transform::prelude::{GlobalTransform, Transform};
 
-use super::graph::SubGraph2d;
-
 #[derive(Component, Default, Reflect, Clone, ExtractComponent)]
 #[extract_component_filter(With<Camera>)]
-#[reflect(Component)]
+#[reflect(Component, Default)]
 pub struct Camera2d;
 
-#[derive(Bundle)]
+#[derive(Bundle, Clone)]
 pub struct Camera2dBundle {
     pub camera: Camera,
     pub camera_render_graph: CameraRenderGraph,
@@ -35,19 +35,18 @@ pub struct Camera2dBundle {
     pub tonemapping: Tonemapping,
     pub deband_dither: DebandDither,
     pub main_texture_usages: CameraMainTextureUsages,
+    pub msaa: Msaa,
+    /// Marker component that indicates that its entity needs to be synchronized to the render world
+    pub sync: SyncToRenderWorld,
 }
 
 impl Default for Camera2dBundle {
     fn default() -> Self {
-        let projection = OrthographicProjection {
-            far: 1000.,
-            near: -1000.,
-            ..Default::default()
-        };
+        let projection = OrthographicProjection::default_2d();
         let transform = Transform::default();
         let frustum = projection.compute_frustum(&GlobalTransform::from(transform));
         Self {
-            camera_render_graph: CameraRenderGraph::new(SubGraph2d),
+            camera_render_graph: CameraRenderGraph::new(Core2d),
             projection,
             visible_entities: VisibleEntities::default(),
             frustum,
@@ -58,6 +57,8 @@ impl Default for Camera2dBundle {
             tonemapping: Tonemapping::None,
             deband_dither: DebandDither::Disabled,
             main_texture_usages: Default::default(),
+            msaa: Default::default(),
+            sync: Default::default(),
         }
     }
 }
@@ -74,12 +75,12 @@ impl Camera2dBundle {
         // the camera's translation by far and use a right handed coordinate system
         let projection = OrthographicProjection {
             far,
-            ..Default::default()
+            ..OrthographicProjection::default_2d()
         };
         let transform = Transform::from_xyz(0.0, 0.0, far - 0.1);
         let frustum = projection.compute_frustum(&GlobalTransform::from(transform));
         Self {
-            camera_render_graph: CameraRenderGraph::new(SubGraph3d),
+            camera_render_graph: CameraRenderGraph::new(Core2d),
             projection,
             visible_entities: VisibleEntities::default(),
             frustum,
@@ -90,6 +91,8 @@ impl Camera2dBundle {
             tonemapping: Tonemapping::None,
             deband_dither: DebandDither::Disabled,
             main_texture_usages: Default::default(),
+            msaa: Default::default(),
+            sync: Default::default(),
         }
     }
 }

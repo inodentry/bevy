@@ -1,4 +1,4 @@
-use bevy_asset::{io::Reader, AssetLoader, AsyncReadExt, LoadContext};
+use bevy_asset::{io::Reader, AssetLoader, LoadContext};
 use bevy_ecs::prelude::{FromWorld, World};
 use thiserror::Error;
 
@@ -51,6 +51,7 @@ pub enum ImageFormatSetting {
     #[default]
     FromExtension,
     Format(ImageFormat),
+    Guess,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -85,35 +86,48 @@ impl AssetLoader for ImageLoader {
     type Asset = Image;
     type Settings = ImageLoaderSettings;
     type Error = ImageLoaderError;
-    fn load<'a>(
-        &'a self,
-        reader: &'a mut Reader,
-        settings: &'a ImageLoaderSettings,
-        load_context: &'a mut LoadContext,
-    ) -> bevy_utils::BoxedFuture<'a, Result<Image, Self::Error>> {
-        Box::pin(async move {
-            // use the file extension for the image type
-            let ext = load_context.path().extension().unwrap().to_str().unwrap();
-
-            let mut bytes = Vec::new();
-            reader.read_to_end(&mut bytes).await?;
-            let image_type = match settings.format {
-                ImageFormatSetting::FromExtension => ImageType::Extension(ext),
-                ImageFormatSetting::Format(format) => ImageType::Format(format),
-            };
-            Ok(Image::from_buffer(
-                &bytes,
-                image_type,
-                self.supported_compressed_formats,
-                settings.is_srgb,
-                settings.sampler.clone(),
-                settings.asset_usage,
-            )
-            .map_err(|err| FileTextureError {
-                error: err,
-                path: format!("{}", load_context.path().display()),
-            })?)
-        })
+    async fn load(
+        &self,
+        reader: &mut dyn Reader,
+        settings: &ImageLoaderSettings,
+        load_context: &mut LoadContext<'_>,
+    ) -> Result<Image, Self::Error> {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        let image_type = match settings.format {
+            ImageFormatSetting::FromExtension => {
+                // use the file extension for the image type
+                let ext = load_context.path().extension().unwrap().to_str().unwrap();
+                ImageType::Extension(ext)
+            }
+            ImageFormatSetting::Format(format) => ImageType::Format(format),
+            ImageFormatSetting::Guess => {
+                let format = image::guess_format(&bytes).map_err(|err| FileTextureError {
+                    error: err.into(),
+                    path: format!("{}", load_context.path().display()),
+                })?;
+                ImageType::Format(ImageFormat::from_image_crate_format(format).ok_or_else(
+                    || FileTextureError {
+                        error: TextureError::UnsupportedTextureFormat(format!("{format:?}")),
+                        path: format!("{}", load_context.path().display()),
+                    },
+                )?)
+            }
+        };
+        Ok(Image::from_buffer(
+            #[cfg(all(debug_assertions, feature = "dds"))]
+            load_context.path().display().to_string(),
+            &bytes,
+            image_type,
+            self.supported_compressed_formats,
+            settings.is_srgb,
+            settings.sampler.clone(),
+            settings.asset_usage,
+        )
+        .map_err(|err| FileTextureError {
+            error: err,
+            path: format!("{}", load_context.path().display()),
+        })?)
     }
 
     fn extensions(&self) -> &[&str] {
@@ -140,8 +154,8 @@ pub struct FileTextureError {
     error: TextureError,
     path: String,
 }
-impl std::fmt::Display for FileTextureError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+impl core::fmt::Display for FileTextureError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
         write!(
             f,
             "Error reading image file {}: {}, this is an error in `bevy_render`.",

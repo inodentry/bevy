@@ -2,9 +2,10 @@
 
 use argh::FromArgs;
 use bevy::{
+    color::palettes::css::ORANGE_RED,
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     prelude::*,
-    window::{PresentMode, WindowPlugin, WindowResolution},
+    window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
 };
 
@@ -96,7 +97,7 @@ fn main() {
 }
 
 #[derive(Component)]
-struct IdleColor(BackgroundColor);
+struct IdleColor(Color);
 
 fn button_system(
     mut interaction_query: Query<
@@ -104,10 +105,10 @@ fn button_system(
         Changed<Interaction>,
     >,
 ) {
-    for (interaction, mut button_color, IdleColor(idle_color)) in interaction_query.iter_mut() {
-        *button_color = match interaction {
-            Interaction::Hovered => Color::ORANGE_RED.into(),
-            _ => *idle_color,
+    for (interaction, mut color, &IdleColor(idle_color)) in interaction_query.iter_mut() {
+        *color = match interaction {
+            Interaction::Hovered => ORANGE_RED.into(),
+            _ => idle_color.into(),
         };
     }
 }
@@ -147,8 +148,8 @@ fn setup_flex(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<
                     .spawn(NodeBundle::default())
                     .with_children(|commands| {
                         for row in 0..args.buttons {
-                            let color = as_rainbow(row % column.max(1)).into();
-                            let border_color = Color::WHITE.with_a(0.5).into();
+                            let color = as_rainbow(row % column.max(1));
+                            let border_color = Color::WHITE.with_alpha(0.5).into();
                             spawn_button(
                                 commands,
                                 color,
@@ -201,8 +202,8 @@ fn setup_grid(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<
         .with_children(|commands| {
             for column in 0..args.buttons {
                 for row in 0..args.buttons {
-                    let color = as_rainbow(row % column.max(1)).into();
-                    let border_color = Color::WHITE.with_a(0.5).into();
+                    let color = as_rainbow(row % column.max(1));
+                    let border_color = Color::WHITE.with_alpha(0.5).into();
                     spawn_button(
                         commands,
                         color,
@@ -225,7 +226,7 @@ fn setup_grid(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<
 #[allow(clippy::too_many_arguments)]
 fn spawn_button(
     commands: &mut ChildBuilder,
-    background_color: BackgroundColor,
+    background_color: Color,
     buttons: f32,
     column: usize,
     row: usize,
@@ -248,7 +249,7 @@ fn spawn_button(
                 border,
                 ..default()
             },
-            background_color,
+            background_color: background_color.into(),
             border_color,
             ..default()
         },
@@ -256,7 +257,7 @@ fn spawn_button(
     ));
 
     if let Some(image) = image {
-        builder.insert(UiImage::new(image));
+        builder = builder.insert(UiImage::new(image));
     }
 
     if spawn_text {
@@ -265,7 +266,7 @@ fn spawn_button(
                 format!("{column}, {row}"),
                 TextStyle {
                     font_size: FONT_SIZE,
-                    color: Color::rgb(0.2, 0.2, 0.2),
+                    color: Color::srgb(0.2, 0.2, 0.2),
                     ..default()
                 },
             ));

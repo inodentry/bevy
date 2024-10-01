@@ -42,7 +42,7 @@ fn setup(
     // Spawn a cube to scale.
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(shape::Cube { size: 1.0 }),
+            mesh: meshes.add(Cuboid::default()),
             material: materials.add(Color::WHITE),
             transform: Transform::from_rotation(Quat::from_rotation_y(PI / 4.0)),
             ..default()
@@ -57,14 +57,10 @@ fn setup(
     });
 
     // Add a light source for better 3d visibility.
-    commands.spawn(PointLightBundle {
-        point_light: PointLight {
-            intensity: 150_000.0,
-            ..default()
-        },
-        transform: Transform::from_translation(Vec3::ONE * 3.0),
-        ..default()
-    });
+    commands.spawn((
+        DirectionalLight::default(),
+        Transform::from_xyz(3.0, 3.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
 }
 
 // This system will check if a scaled entity went above or below the entities scaling bounds

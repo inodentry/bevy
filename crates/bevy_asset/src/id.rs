@@ -1,8 +1,9 @@
 use crate::{Asset, AssetIndex};
 use bevy_reflect::Reflect;
-use bevy_utils::Uuid;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use std::{
+use core::{
     any::TypeId,
     fmt::{Debug, Display},
     hash::Hash,
@@ -16,7 +17,7 @@ use thiserror::Error;
 /// For an identifier tied to the lifetime of an asset, see [`Handle`](`crate::Handle`).
 ///
 /// For an "untyped" / "generic-less" id, see [`UntypedAssetId`].
-#[derive(Reflect)]
+#[derive(Reflect, Serialize, Deserialize)]
 pub enum AssetId<A: Asset> {
     /// A small / efficient runtime identifier that can be used to efficiently look up an asset stored in [`Assets`]. This is
     /// the "default" identifier used for assets. The alternative(s) (ex: [`AssetId::Uuid`]) will only be used if assets are
@@ -85,19 +86,19 @@ impl<A: Asset> Clone for AssetId<A> {
 impl<A: Asset> Copy for AssetId<A> {}
 
 impl<A: Asset> Display for AssetId<A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Debug::fmt(self, f)
     }
 }
 
 impl<A: Asset> Debug for AssetId<A> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             AssetId::Index { index, .. } => {
                 write!(
                     f,
                     "AssetId<{}>{{ index: {}, generation: {}}}",
-                    std::any::type_name::<A>(),
+                    core::any::type_name::<A>(),
                     index.index,
                     index.generation
                 )
@@ -106,7 +107,7 @@ impl<A: Asset> Debug for AssetId<A> {
                 write!(
                     f,
                     "AssetId<{}>{{uuid: {}}}",
-                    std::any::type_name::<A>(),
+                    core::any::type_name::<A>(),
                     uuid
                 )
             }
@@ -116,7 +117,7 @@ impl<A: Asset> Debug for AssetId<A> {
 
 impl<A: Asset> Hash for AssetId<A> {
     #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.internal().hash(state);
         TypeId::of::<A>().hash(state);
     }
@@ -132,13 +133,13 @@ impl<A: Asset> PartialEq for AssetId<A> {
 impl<A: Asset> Eq for AssetId<A> {}
 
 impl<A: Asset> PartialOrd for AssetId<A> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl<A: Asset> Ord for AssetId<A> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.internal().cmp(&other.internal())
     }
 }
@@ -205,7 +206,7 @@ impl UntypedAssetId {
             self.type_id(),
             TypeId::of::<A>(),
             "The target AssetId<{}>'s TypeId does not match the TypeId of this UntypedAssetId",
-            std::any::type_name::<A>()
+            core::any::type_name::<A>()
         );
         self.typed_unchecked()
     }
@@ -220,7 +221,7 @@ impl UntypedAssetId {
         let Ok(id) = self.try_typed() else {
             panic!(
                 "The target AssetId<{}>'s TypeId does not match the TypeId of this UntypedAssetId",
-                std::any::type_name::<A>()
+                core::any::type_name::<A>()
             )
         };
 
@@ -253,7 +254,7 @@ impl UntypedAssetId {
 }
 
 impl Display for UntypedAssetId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut writer = f.debug_struct("UntypedAssetId");
         match self {
             UntypedAssetId::Index { index, type_id } => {
@@ -281,23 +282,28 @@ impl Eq for UntypedAssetId {}
 
 impl Hash for UntypedAssetId {
     #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.internal().hash(state);
         self.type_id().hash(state);
     }
 }
 
+impl Ord for UntypedAssetId {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.type_id()
+            .cmp(&other.type_id())
+            .then_with(|| self.internal().cmp(&other.internal()))
+    }
+}
+
 impl PartialOrd for UntypedAssetId {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if self.type_id() != other.type_id() {
-            None
-        } else {
-            Some(self.internal().cmp(&other.internal()))
-        }
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
 /// An asset id without static or dynamic types associated with it.
+///
 /// This exist to support efficient type erased id drop tracking. We
 /// could use [`UntypedAssetId`] for this, but the [`TypeId`] is unnecessary.
 ///
@@ -361,7 +367,7 @@ impl<A: Asset> PartialEq<AssetId<A>> for UntypedAssetId {
 
 impl<A: Asset> PartialOrd<UntypedAssetId> for AssetId<A> {
     #[inline]
-    fn partial_cmp(&self, other: &UntypedAssetId) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &UntypedAssetId) -> Option<core::cmp::Ordering> {
         if TypeId::of::<A>() != other.type_id() {
             None
         } else {
@@ -372,7 +378,7 @@ impl<A: Asset> PartialOrd<UntypedAssetId> for AssetId<A> {
 
 impl<A: Asset> PartialOrd<AssetId<A>> for UntypedAssetId {
     #[inline]
-    fn partial_cmp(&self, other: &AssetId<A>) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &AssetId<A>) -> Option<core::cmp::Ordering> {
         Some(other.partial_cmp(self)?.reverse())
     }
 }
@@ -430,7 +436,7 @@ mod tests {
 
     /// Simple utility to directly hash a value using a fixed hasher
     fn hash<T: Hash>(data: &T) -> u64 {
-        use std::hash::Hasher;
+        use core::hash::Hasher;
 
         let mut hasher = bevy_utils::AHasher::default();
         data.hash(&mut hasher);

@@ -21,21 +21,24 @@
 use std::f32::consts::PI;
 
 use bevy::{
+    color::palettes::css::*,
     core_pipeline::{
-        bloom::BloomSettings, core_3d::ScreenSpaceTransmissionQuality, prepass::DepthPrepass,
+        bloom::Bloom, core_3d::ScreenSpaceTransmissionQuality, prepass::DepthPrepass,
         tonemapping::Tonemapping,
     },
+    math::ops,
     pbr::{NotShadowCaster, PointLightShadowMap, TransmittedShadowReceiver},
     prelude::*,
-    render::camera::TemporalJitter,
-    render::view::ColorGrading,
+    render::{
+        camera::{Exposure, TemporalJitter},
+        view::{ColorGrading, ColorGradingGlobal},
+    },
 };
 
 #[cfg(not(all(feature = "webgl2", target_arch = "wasm32")))]
 use bevy::core_pipeline::experimental::taa::{
-    TemporalAntiAliasBundle, TemporalAntiAliasPlugin, TemporalAntiAliasSettings,
+    TemporalAntiAliasBundle, TemporalAntiAliasPlugin, TemporalAntiAliasing,
 };
-
 use rand::random;
 
 fn main() {
@@ -55,8 +58,7 @@ fn main() {
     // it _greatly enhances_ the look of the resulting blur effects.
     // Sadly, it's not available under WebGL.
     #[cfg(not(all(feature = "webgl2", target_arch = "wasm32")))]
-    app.insert_resource(Msaa::Off)
-        .add_plugins(TemporalAntiAliasPlugin);
+    app.add_plugins(TemporalAntiAliasPlugin);
 
     app.run();
 }
@@ -68,24 +70,10 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    let icosphere_mesh = meshes.add(
-        Mesh::try_from(shape::Icosphere {
-            radius: 0.9,
-            subdivisions: 7,
-        })
-        .unwrap(),
-    );
-
-    let cube_mesh = meshes.add(shape::Cube { size: 0.7 });
-
-    let plane_mesh = meshes.add(shape::Plane::from_size(2.0));
-
-    let cylinder_mesh = meshes.add(shape::Cylinder {
-        radius: 0.5,
-        height: 2.0,
-        resolution: 50,
-        segments: 1,
-    });
+    let icosphere_mesh = meshes.add(Sphere::new(0.9).mesh().ico(7).unwrap());
+    let cube_mesh = meshes.add(Cuboid::new(0.7, 0.7, 0.7));
+    let plane_mesh = meshes.add(Plane3d::default().mesh().size(2.0, 2.0));
+    let cylinder_mesh = meshes.add(Cylinder::new(0.5, 2.0).mesh().resolution(50));
 
     // Cube #1
     commands.spawn((
@@ -132,7 +120,7 @@ fn setup(
         PbrBundle {
             mesh: cylinder_mesh,
             material: materials.add(StandardMaterial {
-                base_color: Color::rgba(0.9, 0.2, 0.3, 1.0),
+                base_color: Color::srgb(0.9, 0.2, 0.3),
                 diffuse_transmission: 0.7,
                 perceptual_roughness: 0.32,
                 thickness: 0.2,
@@ -149,11 +137,20 @@ fn setup(
     ));
 
     // Candle Flame
+    let scaled_white = LinearRgba::from(ANTIQUE_WHITE) * 20.;
+    let scaled_orange = LinearRgba::from(ORANGE_RED) * 4.;
+    let emissive = LinearRgba {
+        red: scaled_white.red + scaled_orange.red,
+        green: scaled_white.green + scaled_orange.green,
+        blue: scaled_white.blue + scaled_orange.blue,
+        alpha: 1.0,
+    };
+
     commands.spawn((
         PbrBundle {
             mesh: icosphere_mesh.clone(),
             material: materials.add(StandardMaterial {
-                emissive: Color::ANTIQUE_WHITE * 80.0 + Color::ORANGE_RED * 16.0,
+                emissive,
                 diffuse_transmission: 1.0,
                 ..default()
             }),
@@ -192,7 +189,7 @@ fn setup(
         PbrBundle {
             mesh: icosphere_mesh.clone(),
             material: materials.add(StandardMaterial {
-                base_color: Color::RED,
+                base_color: RED.into(),
                 specular_transmission: 0.9,
                 diffuse_transmission: 1.0,
                 thickness: 1.8,
@@ -215,7 +212,7 @@ fn setup(
         PbrBundle {
             mesh: icosphere_mesh.clone(),
             material: materials.add(StandardMaterial {
-                base_color: Color::GREEN,
+                base_color: LIME.into(),
                 specular_transmission: 0.9,
                 diffuse_transmission: 1.0,
                 thickness: 1.8,
@@ -238,7 +235,7 @@ fn setup(
         PbrBundle {
             mesh: icosphere_mesh,
             material: materials.add(StandardMaterial {
-                base_color: Color::BLUE,
+                base_color: BLUE.into(),
                 specular_transmission: 0.9,
                 diffuse_transmission: 1.0,
                 thickness: 1.8,
@@ -321,16 +318,15 @@ fn setup(
 
     // Candle Light
     commands.spawn((
-        PointLightBundle {
-            transform: Transform::from_xyz(-1.0, 1.7, 0.0),
-            point_light: PointLight {
-                color: Color::ANTIQUE_WHITE * 0.8 + Color::ORANGE_RED * 0.2,
-                intensity: 60_000.0,
-                radius: 0.2,
-                range: 5.0,
-                shadows_enabled: true,
-                ..default()
-            },
+        Transform::from_xyz(-1.0, 1.7, 0.0),
+        PointLight {
+            color: Color::from(
+                LinearRgba::from(ANTIQUE_WHITE).mix(&LinearRgba::from(ORANGE_RED), 0.2),
+            ),
+            intensity: 4_000.0,
+            radius: 0.2,
+            range: 5.0,
+            shadows_enabled: true,
             ..default()
         },
         Flicker,
@@ -345,10 +341,16 @@ fn setup(
             },
             transform: Transform::from_xyz(1.0, 1.8, 7.0).looking_at(Vec3::ZERO, Vec3::Y),
             color_grading: ColorGrading {
-                post_saturation: 1.2,
+                global: ColorGradingGlobal {
+                    post_saturation: 1.2,
+                    ..default()
+                },
                 ..default()
             },
             tonemapping: Tonemapping::TonyMcMapface,
+            exposure: Exposure { ev100: 6.0 },
+            #[cfg(not(all(feature = "webgl2", target_arch = "wasm32")))]
+            msaa: Msaa::Off,
             ..default()
         },
         #[cfg(not(all(feature = "webgl2", target_arch = "wasm32")))]
@@ -357,22 +359,19 @@ fn setup(
             intensity: 25.0,
             diffuse_map: asset_server.load("environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
             specular_map: asset_server.load("environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
+            ..default()
         },
-        BloomSettings::default(),
+        Bloom::default(),
     ));
 
     // Controls Text
-    let text_style = TextStyle {
-        font_size: 18.0,
-        color: Color::WHITE,
-        ..Default::default()
-    };
+    let text_style = TextStyle::default();
 
     commands.spawn((
         TextBundle::from_section("", text_style).with_style(Style {
             position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            left: Val::Px(10.0),
+            top: Val::Px(12.0),
+            left: Val::Px(12.0),
             ..default()
         }),
         ExampleDisplay,
@@ -490,9 +489,8 @@ fn example_control_system(
         }
 
         if controls.color && randomize_colors {
-            material.base_color.set_r(random());
-            material.base_color.set_g(random());
-            material.base_color.set_b(random());
+            material.base_color =
+                Color::srgba(random(), random(), random(), material.base_color.alpha());
         }
     }
 
@@ -521,14 +519,13 @@ fn example_control_system(
     #[cfg(not(all(feature = "webgl2", target_arch = "wasm32")))]
     if input.just_pressed(KeyCode::KeyT) {
         if temporal_jitter.is_none() {
-            commands.entity(camera_entity).insert((
-                TemporalJitter::default(),
-                TemporalAntiAliasSettings::default(),
-            ));
+            commands
+                .entity(camera_entity)
+                .insert((TemporalJitter::default(), TemporalAntiAliasing::default()));
         } else {
             commands
                 .entity(camera_entity)
-                .remove::<(TemporalJitter, TemporalAntiAliasSettings)>();
+                .remove::<(TemporalJitter, TemporalAntiAliasing)>();
         }
     }
 
@@ -579,7 +576,7 @@ fn example_control_system(
             0.0
         };
 
-    camera_transform.translation *= distance_change.exp();
+    camera_transform.translation *= ops::exp(distance_change);
 
     camera_transform.rotate_around(
         Vec3::ZERO,
@@ -643,12 +640,12 @@ fn flicker_system(
     time: Res<Time>,
 ) {
     let s = time.elapsed_seconds();
-    let a = (s * 6.0).cos() * 0.0125 + (s * 4.0).cos() * 0.025;
-    let b = (s * 5.0).cos() * 0.0125 + (s * 3.0).cos() * 0.025;
-    let c = (s * 7.0).cos() * 0.0125 + (s * 2.0).cos() * 0.025;
+    let a = ops::cos(s * 6.0) * 0.0125 + ops::cos(s * 4.0) * 0.025;
+    let b = ops::cos(s * 5.0) * 0.0125 + ops::cos(s * 3.0) * 0.025;
+    let c = ops::cos(s * 7.0) * 0.0125 + ops::cos(s * 2.0) * 0.025;
     let (mut light, mut light_transform) = light.single_mut();
     let mut flame_transform = flame.single_mut();
-    light.intensity = 60_000.0 + 3000.0 * (a + b + c);
+    light.intensity = 4_000.0 + 3000.0 * (a + b + c);
     flame_transform.translation = Vec3::new(-1.0, 1.23, 0.0);
     flame_transform.look_at(Vec3::new(-1.0 - c, 1.7 - b, 0.0 - a), Vec3::X);
     flame_transform.rotate(Quat::from_euler(EulerRot::XYZ, 0.0, 0.0, PI / 2.0));

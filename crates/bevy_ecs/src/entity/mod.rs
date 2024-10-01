@@ -36,9 +36,18 @@
 //! [`EntityWorldMut::insert`]: crate::world::EntityWorldMut::insert
 //! [`EntityWorldMut::remove`]: crate::world::EntityWorldMut::remove
 mod map_entities;
+mod visit_entities;
+#[cfg(feature = "bevy_reflect")]
+use bevy_reflect::Reflect;
+#[cfg(all(feature = "bevy_reflect", feature = "serialize"))]
+use bevy_reflect::{ReflectDeserialize, ReflectSerialize};
+pub use map_entities::*;
+pub use visit_entities::*;
+
+mod hash;
+pub use hash::*;
 
 use bevy_utils::tracing::warn;
-pub use map_entities::*;
 
 use crate::{
     archetype::{ArchetypeId, ArchetypeRow},
@@ -50,11 +59,12 @@ use crate::{
     },
     storage::{SparseSetIndex, TableId, TableRow},
 };
+use core::{fmt, hash::Hash, mem, num::NonZero, sync::atomic::Ordering};
+#[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
-use std::{convert::TryFrom, fmt, hash::Hash, mem, num::NonZeroU32, sync::atomic::Ordering};
 
 #[cfg(target_has_atomic = "64")]
-use std::sync::atomic::AtomicI64 as AtomicIdCursor;
+use core::sync::atomic::AtomicI64 as AtomicIdCursor;
 #[cfg(target_has_atomic = "64")]
 type IdCursor = i64;
 
@@ -62,7 +72,7 @@ type IdCursor = i64;
 /// do not. This fallback allows compilation using a 32-bit cursor instead, with
 /// the caveat that some conversions may fail (and panic) at runtime.
 #[cfg(not(target_has_atomic = "64"))]
-use std::sync::atomic::AtomicIsize as AtomicIdCursor;
+use core::sync::atomic::AtomicIsize as AtomicIdCursor;
 #[cfg(not(target_has_atomic = "64"))]
 type IdCursor = isize;
 
@@ -75,6 +85,17 @@ type IdCursor = isize;
 /// fetch entity components or metadata from a different world will either fail or return unexpected results.
 ///
 /// [generational index]: https://lucassardois.medium.com/generational-indices-guide-8e3c5f7fd594
+///
+/// # Stability warning
+/// For all intents and purposes, `Entity` should be treated as an opaque identifier. The internal bit
+/// representation is liable to change from release to release as are the behaviors or performance
+/// characteristics of any of its trait implementations (i.e. `Ord`, `Hash`, etc.). This means that changes in
+/// `Entity`'s representation, though made readable through various functions on the type, are not considered
+/// breaking changes under [SemVer].
+///
+/// In particular, directly serializing with `Serialize` and `Deserialize` make zero guarantee of long
+/// term wire format compatibility. Changes in behavior will cause serialized `Entity` values persisted
+/// to long term storage (i.e. disk, databases, etc.) will fail to deserialize upon being updated.
 ///
 /// # Usage
 ///
@@ -122,7 +143,15 @@ type IdCursor = isize;
 /// [`EntityCommands`]: crate::system::EntityCommands
 /// [`Query::get`]: crate::system::Query::get
 /// [`World`]: crate::world::World
+/// [SemVer]: https://semver.org/
 #[derive(Clone, Copy)]
+#[cfg_attr(feature = "bevy_reflect", derive(Reflect))]
+#[cfg_attr(feature = "bevy_reflect", reflect(opaque))]
+#[cfg_attr(feature = "bevy_reflect", reflect(Hash, PartialEq, Debug))]
+#[cfg_attr(
+    all(feature = "bevy_reflect", feature = "serialize"),
+    reflect(Serialize, Deserialize)
+)]
 // Alignment repr necessary to allow LLVM to better output
 // optimised codegen for `to_bits`, `PartialEq` and `Ord`.
 #[repr(C, align(8))]
@@ -131,7 +160,7 @@ pub struct Entity {
     // to make this struct equivalent to a u64.
     #[cfg(target_endian = "little")]
     index: u32,
-    generation: NonZeroU32,
+    generation: NonZero<u32>,
     #[cfg(target_endian = "big")]
     index: u32,
 }
@@ -158,7 +187,7 @@ impl Eq for Entity {}
 // See <https://github.com/rust-lang/rust/issues/106107>
 impl PartialOrd for Entity {
     #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         // Make use of our `Ord` impl to ensure optimal codegen output
         Some(self.cmp(other))
     }
@@ -172,7 +201,7 @@ impl PartialOrd for Entity {
 // See <https://github.com/rust-lang/rust/issues/106107>
 impl Ord for Entity {
     #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         // This will result in better codegen for ordering comparisons, plus
         // avoids pitfalls with regards to macro codegen relying on property
         // position when we want to compare against the bit representation.
@@ -182,7 +211,7 @@ impl Ord for Entity {
 
 impl Hash for Entity {
     #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.to_bits().hash(state);
     }
 }
@@ -197,7 +226,7 @@ impl Entity {
     /// Construct an [`Entity`] from a raw `index` value and a non-zero `generation` value.
     /// Ensure that the generation value is never greater than `0x7FFF_FFFF`.
     #[inline(always)]
-    pub(crate) const fn from_raw_and_generation(index: u32, generation: NonZeroU32) -> Entity {
+    pub(crate) const fn from_raw_and_generation(index: u32, generation: NonZero<u32>) -> Entity {
         debug_assert!(generation.get() <= HIGH_MASK);
 
         Self { index, generation }
@@ -218,7 +247,7 @@ impl Entity {
     /// // ... replace the entities with valid ones.
     /// ```
     ///
-    /// Deriving [`Reflect`](bevy_reflect::Reflect) for a component that has an `Entity` field:
+    /// Deriving [`Reflect`] for a component that has an `Entity` field:
     ///
     /// ```no_run
     /// # use bevy_ecs::{prelude::*, component::*};
@@ -253,7 +282,7 @@ impl Entity {
     /// a component.
     #[inline(always)]
     pub const fn from_raw(index: u32) -> Entity {
-        Self::from_raw_and_generation(index, NonZeroU32::MIN)
+        Self::from_raw_and_generation(index, NonZero::<u32>::MIN)
     }
 
     /// Convert to a form convenient for passing outside of rust.
@@ -342,6 +371,7 @@ impl From<Entity> for Identifier {
     }
 }
 
+#[cfg(feature = "serialize")]
 impl Serialize for Entity {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -351,18 +381,55 @@ impl Serialize for Entity {
     }
 }
 
+#[cfg(feature = "serialize")]
 impl<'de> Deserialize<'de> for Entity {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         use serde::de::Error;
-        let id: u64 = serde::de::Deserialize::deserialize(deserializer)?;
+        let id: u64 = Deserialize::deserialize(deserializer)?;
         Entity::try_from_bits(id).map_err(D::Error::custom)
     }
 }
 
+/// Outputs the full entity identifier, including the index, generation, and the raw bits.
+///
+/// This takes the format: `{index}v{generation}#{bits}`.
+///
+/// # Usage
+///
+/// Prefer to use this format for debugging and logging purposes. Because the output contains
+/// the raw bits, it is easy to check it against serialized scene data.
+///
+/// Example serialized scene data:
+/// ```text
+/// (
+///   ...
+///   entities: {
+///     4294967297: (  <--- Raw Bits
+///       components: {
+///         ...
+///       ),
+///   ...
+/// )
+/// ```
 impl fmt::Debug for Entity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}v{}#{}",
+            self.index(),
+            self.generation(),
+            self.to_bits()
+        )
+    }
+}
+
+/// Outputs the short entity identifier, including the index and generation.
+///
+/// This takes the format: `{index}v{generation}`.
+impl fmt::Display for Entity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}v{}", self.index(), self.generation())
     }
@@ -386,26 +453,26 @@ pub struct ReserveEntitiesIterator<'a> {
     meta: &'a [EntityMeta],
 
     // Reserved indices formerly in the freelist to hand out.
-    index_iter: std::slice::Iter<'a, u32>,
+    freelist_indices: core::slice::Iter<'a, u32>,
 
     // New Entity indices to hand out, outside the range of meta.len().
-    index_range: std::ops::Range<u32>,
+    new_indices: core::ops::Range<u32>,
 }
 
 impl<'a> Iterator for ReserveEntitiesIterator<'a> {
     type Item = Entity;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.index_iter
+        self.freelist_indices
             .next()
             .map(|&index| {
                 Entity::from_raw_and_generation(index, self.meta[index as usize].generation)
             })
-            .or_else(|| self.index_range.next().map(Entity::from_raw))
+            .or_else(|| self.new_indices.next().map(Entity::from_raw))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.index_iter.len() + self.index_range.len();
+        let len = self.freelist_indices.len() + self.new_indices.len();
         (len, Some(len))
     }
 }
@@ -489,12 +556,14 @@ impl Entities {
         // Use one atomic subtract to grab a range of new IDs. The range might be
         // entirely nonnegative, meaning all IDs come from the freelist, or entirely
         // negative, meaning they are all new IDs to allocate, or a mix of both.
-        let range_end = self
-            .free_cursor
-            // Unwrap: these conversions can only fail on platforms that don't support 64-bit atomics
-            // and use AtomicIsize instead (see note on `IdCursor`).
-            .fetch_sub(IdCursor::try_from(count).unwrap(), Ordering::Relaxed);
-        let range_start = range_end - IdCursor::try_from(count).unwrap();
+        let range_end = self.free_cursor.fetch_sub(
+            IdCursor::try_from(count)
+                .expect("64-bit atomic operations are not supported on this platform."),
+            Ordering::Relaxed,
+        );
+        let range_start = range_end
+            - IdCursor::try_from(count)
+                .expect("64-bit atomic operations are not supported on this platform.");
 
         let freelist_range = range_start.max(0) as usize..range_end.max(0) as usize;
 
@@ -523,8 +592,8 @@ impl Entities {
 
         ReserveEntitiesIterator {
             meta: &self.meta[..],
-            index_iter: self.pending[freelist_range].iter(),
-            index_range: new_id_start..new_id_end,
+            freelist_indices: self.pending[freelist_range].iter(),
+            new_indices: new_id_start..new_id_end,
         }
     }
 
@@ -658,7 +727,7 @@ impl Entities {
 
         meta.generation = IdentifierMask::inc_masked_high_by(meta.generation, 1);
 
-        if meta.generation == NonZeroU32::MIN {
+        if meta.generation == NonZero::<u32>::MIN {
             warn!(
                 "Entity({}) generation wrapped on Entities::free, aliasing may occur",
                 entity.index
@@ -681,9 +750,9 @@ impl Entities {
         self.verify_flushed();
 
         let freelist_size = *self.free_cursor.get_mut();
-        // Unwrap: these conversions can only fail on platforms that don't support 64-bit atomics
-        // and use AtomicIsize instead (see note on `IdCursor`).
-        let shortfall = IdCursor::try_from(additional).unwrap() - freelist_size;
+        let shortfall = IdCursor::try_from(additional)
+            .expect("64-bit atomic operations are not supported on this platform.")
+            - freelist_size;
         if shortfall > 0 {
             self.meta.reserve(shortfall as usize);
         }
@@ -731,7 +800,8 @@ impl Entities {
     #[inline]
     pub(crate) unsafe fn set(&mut self, index: u32, location: EntityLocation) {
         // SAFETY: Caller guarantees that `index` a valid entity index
-        self.meta.get_unchecked_mut(index as usize).location = location;
+        let meta = unsafe { self.meta.get_unchecked_mut(index as usize) };
+        meta.location = location;
     }
 
     /// Increments the `generation` of a freed [`Entity`]. The next entity ID allocated with this
@@ -838,9 +908,14 @@ impl Entities {
         let free_cursor = self.free_cursor.get_mut();
         *free_cursor = 0;
         self.meta.reserve(count);
-        // the EntityMeta struct only contains integers, and it is valid to have all bytes set to u8::MAX
-        self.meta.as_mut_ptr().write_bytes(u8::MAX, count);
-        self.meta.set_len(count);
+        // SAFETY: The EntityMeta struct only contains integers, and it is valid to have all bytes set to u8::MAX
+        unsafe {
+            self.meta.as_mut_ptr().write_bytes(u8::MAX, count);
+        }
+        // SAFETY: We have reserved `count` elements above and we have initialized values from index 0 to `count`.
+        unsafe {
+            self.meta.set_len(count);
+        }
 
         self.len = count as u32;
     }
@@ -879,7 +954,7 @@ impl Entities {
 #[repr(C)]
 struct EntityMeta {
     /// The current generation of the [`Entity`].
-    pub generation: NonZeroU32,
+    pub generation: NonZero<u32>,
     /// The current location of the [`Entity`]
     pub location: EntityLocation,
 }
@@ -887,7 +962,7 @@ struct EntityMeta {
 impl EntityMeta {
     /// meta for **pending entity**
     const EMPTY: EntityMeta = EntityMeta {
-        generation: NonZeroU32::MIN,
+        generation: NonZero::<u32>::MIN,
         location: EntityLocation::INVALID,
     };
 }
@@ -937,16 +1012,14 @@ mod tests {
 
     #[test]
     fn entity_niche_optimization() {
-        assert_eq!(
-            std::mem::size_of::<Entity>(),
-            std::mem::size_of::<Option<Entity>>()
-        );
+        assert_eq!(size_of::<Entity>(), size_of::<Option<Entity>>());
     }
 
     #[test]
     fn entity_bits_roundtrip() {
         // Generation cannot be greater than 0x7FFF_FFFF else it will be an invalid Entity id
-        let e = Entity::from_raw_and_generation(0xDEADBEEF, NonZeroU32::new(0x5AADF00D).unwrap());
+        let e =
+            Entity::from_raw_and_generation(0xDEADBEEF, NonZero::<u32>::new(0x5AADF00D).unwrap());
         assert_eq!(Entity::from_bits(e.to_bits()), e);
     }
 
@@ -1020,70 +1093,68 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::nonminimal_bool)] // This is intentionally testing `lt` and `ge` as separate functions.
     fn entity_comparison() {
-        // This is intentionally testing `lt` and `ge` as separate functions.
-        #![allow(clippy::nonminimal_bool)]
-
         assert_eq!(
-            Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap()),
-            Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap())
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap()),
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap())
         );
         assert_ne!(
-            Entity::from_raw_and_generation(123, NonZeroU32::new(789).unwrap()),
-            Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap())
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(789).unwrap()),
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap())
         );
         assert_ne!(
-            Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap()),
-            Entity::from_raw_and_generation(123, NonZeroU32::new(789).unwrap())
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap()),
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(789).unwrap())
         );
         assert_ne!(
-            Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap()),
-            Entity::from_raw_and_generation(456, NonZeroU32::new(123).unwrap())
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap()),
+            Entity::from_raw_and_generation(456, NonZero::<u32>::new(123).unwrap())
         );
 
         // ordering is by generation then by index
 
         assert!(
-            Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap())
-                >= Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap())
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap())
+                >= Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap())
         );
         assert!(
-            Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap())
-                <= Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap())
+            Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap())
+                <= Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap())
         );
         assert!(
-            !(Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap())
-                < Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap()))
+            !(Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap())
+                < Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap()))
         );
         assert!(
-            !(Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap())
-                > Entity::from_raw_and_generation(123, NonZeroU32::new(456).unwrap()))
-        );
-
-        assert!(
-            Entity::from_raw_and_generation(9, NonZeroU32::new(1).unwrap())
-                < Entity::from_raw_and_generation(1, NonZeroU32::new(9).unwrap())
-        );
-        assert!(
-            Entity::from_raw_and_generation(1, NonZeroU32::new(9).unwrap())
-                > Entity::from_raw_and_generation(9, NonZeroU32::new(1).unwrap())
+            !(Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap())
+                > Entity::from_raw_and_generation(123, NonZero::<u32>::new(456).unwrap()))
         );
 
         assert!(
-            Entity::from_raw_and_generation(1, NonZeroU32::new(1).unwrap())
-                < Entity::from_raw_and_generation(2, NonZeroU32::new(1).unwrap())
+            Entity::from_raw_and_generation(9, NonZero::<u32>::new(1).unwrap())
+                < Entity::from_raw_and_generation(1, NonZero::<u32>::new(9).unwrap())
         );
         assert!(
-            Entity::from_raw_and_generation(1, NonZeroU32::new(1).unwrap())
-                <= Entity::from_raw_and_generation(2, NonZeroU32::new(1).unwrap())
+            Entity::from_raw_and_generation(1, NonZero::<u32>::new(9).unwrap())
+                > Entity::from_raw_and_generation(9, NonZero::<u32>::new(1).unwrap())
+        );
+
+        assert!(
+            Entity::from_raw_and_generation(1, NonZero::<u32>::new(1).unwrap())
+                < Entity::from_raw_and_generation(2, NonZero::<u32>::new(1).unwrap())
         );
         assert!(
-            Entity::from_raw_and_generation(2, NonZeroU32::new(2).unwrap())
-                > Entity::from_raw_and_generation(1, NonZeroU32::new(2).unwrap())
+            Entity::from_raw_and_generation(1, NonZero::<u32>::new(1).unwrap())
+                <= Entity::from_raw_and_generation(2, NonZero::<u32>::new(1).unwrap())
         );
         assert!(
-            Entity::from_raw_and_generation(2, NonZeroU32::new(2).unwrap())
-                >= Entity::from_raw_and_generation(1, NonZeroU32::new(2).unwrap())
+            Entity::from_raw_and_generation(2, NonZero::<u32>::new(2).unwrap())
+                > Entity::from_raw_and_generation(1, NonZero::<u32>::new(2).unwrap())
+        );
+        assert!(
+            Entity::from_raw_and_generation(2, NonZero::<u32>::new(2).unwrap())
+                >= Entity::from_raw_and_generation(1, NonZero::<u32>::new(2).unwrap())
         );
     }
 
@@ -1091,8 +1162,8 @@ mod tests {
     // part of the best-case performance changes in PR#9903.
     #[test]
     fn entity_hash_keeps_similar_ids_together() {
-        use std::hash::BuildHasher;
-        let hash = bevy_utils::EntityHash;
+        use core::hash::BuildHasher;
+        let hash = EntityHash;
 
         let first_id = 0xC0FFEE << 8;
         let first_hash = hash.hash_one(Entity::from_raw(first_id));
@@ -1106,8 +1177,9 @@ mod tests {
 
     #[test]
     fn entity_hash_id_bitflip_affects_high_7_bits() {
-        use std::hash::BuildHasher;
-        let hash = bevy_utils::EntityHash;
+        use core::hash::BuildHasher;
+
+        let hash = EntityHash;
 
         let first_id = 0xC0FFEE;
         let first_hash = hash.hash_one(Entity::from_raw(first_id)) >> 57;
@@ -1117,5 +1189,22 @@ mod tests {
             let hash = hash.hash_one(Entity::from_raw(id)) >> 57;
             assert_ne!(hash, first_hash);
         }
+    }
+
+    #[test]
+    fn entity_debug() {
+        let entity = Entity::from_raw(42);
+        let string = format!("{:?}", entity);
+        assert!(string.contains("42"));
+        assert!(string.contains("v1"));
+        assert!(string.contains(format!("#{}", entity.to_bits()).as_str()));
+    }
+
+    #[test]
+    fn entity_display() {
+        let entity = Entity::from_raw(42);
+        let string = format!("{}", entity);
+        assert!(string.contains("42"));
+        assert!(string.contains("v1"));
     }
 }

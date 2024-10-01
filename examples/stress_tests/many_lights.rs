@@ -4,12 +4,13 @@
 use std::f64::consts::PI;
 
 use bevy::{
+    color::palettes::css::DEEP_PINK,
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     math::{DVec2, DVec3},
-    pbr::{ExtractedPointLight, GlobalLightMeta},
+    pbr::{ExtractedPointLight, GlobalClusterableObjectMeta},
     prelude::*,
     render::{camera::ScalingMode, Render, RenderApp, RenderSet},
-    window::{PresentMode, WindowPlugin, WindowResolution},
+    window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
 };
 use rand::{thread_rng, Rng};
@@ -48,26 +49,20 @@ fn setup(
     warn!(include_str!("warning_string.txt"));
 
     const LIGHT_RADIUS: f32 = 0.3;
-    const LIGHT_INTENSITY: f32 = 5.0;
+    const LIGHT_INTENSITY: f32 = 1000.0;
     const RADIUS: f32 = 50.0;
     const N_LIGHTS: usize = 100_000;
 
     commands.spawn(PbrBundle {
-        mesh: meshes.add(
-            Mesh::try_from(shape::Icosphere {
-                radius: RADIUS,
-                subdivisions: 9,
-            })
-            .unwrap(),
-        ),
+        mesh: meshes.add(Sphere::new(RADIUS).mesh().ico(9).unwrap()),
         material: materials.add(Color::WHITE),
         transform: Transform::from_scale(Vec3::NEG_ONE),
         ..default()
     });
 
-    let mesh = meshes.add(shape::Cube { size: 1.0 });
+    let mesh = meshes.add(Cuboid::default());
     let material = materials.add(StandardMaterial {
-        base_color: Color::PINK,
+        base_color: DEEP_PINK.into(),
         ..default()
     });
 
@@ -75,29 +70,31 @@ fn setup(
     // the same number of visible meshes regardless of the viewing angle.
     // NOTE: f64 is used to avoid precision issues that produce visual artifacts in the distribution
     let golden_ratio = 0.5f64 * (1.0f64 + 5.0f64.sqrt());
-    let mut rng = thread_rng();
-    for i in 0..N_LIGHTS {
+
+    // Spawn N_LIGHTS many lights
+    commands.spawn_batch((0..N_LIGHTS).map(move |i| {
+        let mut rng = thread_rng();
+
         let spherical_polar_theta_phi = fibonacci_spiral_on_sphere(golden_ratio, i, N_LIGHTS);
         let unit_sphere_p = spherical_polar_to_cartesian(spherical_polar_theta_phi);
-        commands.spawn(PointLightBundle {
-            point_light: PointLight {
+
+        (
+            PointLight {
                 range: LIGHT_RADIUS,
                 intensity: LIGHT_INTENSITY,
                 color: Color::hsl(rng.gen_range(0.0..360.0), 1.0, 0.5),
                 ..default()
             },
-            transform: Transform::from_translation((RADIUS as f64 * unit_sphere_p).as_vec3()),
-            ..default()
-        });
-    }
+            Transform::from_translation((RADIUS as f64 * unit_sphere_p).as_vec3()),
+        )
+    }));
 
     // camera
     match std::env::args().nth(1).as_deref() {
         Some("orthographic") => commands.spawn(Camera3dBundle {
             projection: OrthographicProjection {
-                scale: 20.0,
-                scaling_mode: ScalingMode::FixedHorizontal(1.0),
-                ..default()
+                scaling_mode: ScalingMode::FixedHorizontal(20.0),
+                ..OrthographicProjection::default_3d()
             }
             .into(),
             ..default()
@@ -127,7 +124,8 @@ const EPSILON: f64 = 0.36;
 fn fibonacci_spiral_on_sphere(golden_ratio: f64, i: usize, n: usize) -> DVec2 {
     DVec2::new(
         PI * 2. * (i as f64 / golden_ratio),
-        (1.0 - 2.0 * (i as f64 + EPSILON) / (n as f64 - 1.0 + 2.0 * EPSILON)).acos(),
+        ops::acos((1.0 - 2.0 * (i as f64 + EPSILON) / (n as f64 - 1.0 + 2.0 * EPSILON)) as f32)
+            as f64,
     )
 }
 
@@ -158,7 +156,7 @@ struct LogVisibleLights;
 
 impl Plugin for LogVisibleLights {
     fn build(&self, app: &mut App) {
-        let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
@@ -171,7 +169,7 @@ fn print_visible_light_count(
     time: Res<Time>,
     mut timer: Local<PrintingTimer>,
     visible: Query<&ExtractedPointLight>,
-    global_light_meta: Res<GlobalLightMeta>,
+    global_light_meta: Res<GlobalClusterableObjectMeta>,
 ) {
     timer.0.tick(time.delta());
 

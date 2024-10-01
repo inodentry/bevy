@@ -2,9 +2,10 @@
 
 use bevy::{
     core_pipeline::experimental::taa::{TemporalAntiAliasBundle, TemporalAntiAliasPlugin},
+    math::ops,
     pbr::{
-        ScreenSpaceAmbientOcclusionBundle, ScreenSpaceAmbientOcclusionQualityLevel,
-        ScreenSpaceAmbientOcclusionSettings,
+        ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionBundle,
+        ScreenSpaceAmbientOcclusionQualityLevel,
     },
     prelude::*,
     render::camera::TemporalJitter,
@@ -14,7 +15,7 @@ use std::f32::consts::PI;
 fn main() {
     App::new()
         .insert_resource(AmbientLight {
-            brightness: 750.0,
+            brightness: 1000.,
             ..default()
         })
         .add_plugins((DefaultPlugins, TemporalAntiAliasPlugin))
@@ -27,7 +28,6 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    asset_server: Res<AssetServer>,
 ) {
     commands
         .spawn(Camera3dBundle {
@@ -36,44 +36,41 @@ fn setup(
                 ..default()
             },
             transform: Transform::from_xyz(-2.0, 2.0, -2.0).looking_at(Vec3::ZERO, Vec3::Y),
+            msaa: Msaa::Off,
             ..default()
         })
         .insert(ScreenSpaceAmbientOcclusionBundle::default())
         .insert(TemporalAntiAliasBundle::default());
 
     let material = materials.add(StandardMaterial {
-        base_color: Color::rgb(0.5, 0.5, 0.5),
+        base_color: Color::srgb(0.5, 0.5, 0.5),
         perceptual_roughness: 1.0,
         reflectance: 0.0,
         ..default()
     });
     commands.spawn(PbrBundle {
-        mesh: meshes.add(shape::Cube { size: 1.0 }),
+        mesh: meshes.add(Cuboid::default()),
         material: material.clone(),
         transform: Transform::from_xyz(0.0, 0.0, 1.0),
         ..default()
     });
     commands.spawn(PbrBundle {
-        mesh: meshes.add(shape::Cube { size: 1.0 }),
+        mesh: meshes.add(Cuboid::default()),
         material: material.clone(),
         transform: Transform::from_xyz(0.0, -1.0, 0.0),
         ..default()
     });
     commands.spawn(PbrBundle {
-        mesh: meshes.add(shape::Cube { size: 1.0 }),
+        mesh: meshes.add(Cuboid::default()),
         material,
         transform: Transform::from_xyz(1.0, 0.0, 0.0),
         ..default()
     });
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(shape::UVSphere {
-                radius: 0.4,
-                sectors: 72,
-                stacks: 36,
-            }),
+            mesh: meshes.add(Sphere::new(0.4).mesh().uv(72, 36)),
             material: materials.add(StandardMaterial {
-                base_color: Color::rgb(0.4, 0.4, 0.4),
+                base_color: Color::srgb(0.4, 0.4, 0.4),
                 perceptual_roughness: 1.0,
                 reflectance: 0.0,
                 ..default()
@@ -83,34 +80,19 @@ fn setup(
         SphereMarker,
     ));
 
-    commands.spawn(DirectionalLightBundle {
-        directional_light: DirectionalLight {
-            illuminance: 3000.0,
+    commands.spawn((
+        DirectionalLight {
             shadows_enabled: true,
             ..default()
         },
-        transform: Transform::from_rotation(Quat::from_euler(
-            EulerRot::ZYX,
-            0.0,
-            PI * -0.15,
-            PI * -0.15,
-        )),
-        ..default()
-    });
+        Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI * -0.15, PI * -0.15)),
+    ));
 
     commands.spawn(
-        TextBundle::from_section(
-            "",
-            TextStyle {
-                font: asset_server.load("fonts/FiraMono-Medium.ttf"),
-                font_size: 26.0,
-                ..default()
-            },
-        )
-        .with_style(Style {
+        TextBundle::from_section("", TextStyle::default()).with_style(Style {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(10.0),
-            left: Val::Px(10.0),
+            bottom: Val::Px(12.0),
+            left: Val::Px(12.0),
             ..default()
         }),
     );
@@ -120,7 +102,7 @@ fn update(
     camera: Query<
         (
             Entity,
-            Option<&ScreenSpaceAmbientOcclusionSettings>,
+            Option<&ScreenSpaceAmbientOcclusion>,
             Option<&TemporalJitter>,
         ),
         With<Camera>,
@@ -132,33 +114,38 @@ fn update(
     time: Res<Time>,
 ) {
     let mut sphere = sphere.single_mut();
-    sphere.translation.y = (time.elapsed_seconds() / 1.7).sin() * 0.7;
+    sphere.translation.y = ops::sin(time.elapsed_seconds() / 1.7) * 0.7;
 
-    let (camera_entity, ssao_settings, temporal_jitter) = camera.single();
+    let (camera_entity, ssao, temporal_jitter) = camera.single();
 
-    let mut commands = commands.entity(camera_entity);
+    let mut commands = commands
+        .entity(camera_entity)
+        .insert_if(
+            ScreenSpaceAmbientOcclusion {
+                quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Low,
+            },
+            || keycode.just_pressed(KeyCode::Digit2),
+        )
+        .insert_if(
+            ScreenSpaceAmbientOcclusion {
+                quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Medium,
+            },
+            || keycode.just_pressed(KeyCode::Digit3),
+        )
+        .insert_if(
+            ScreenSpaceAmbientOcclusion {
+                quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
+            },
+            || keycode.just_pressed(KeyCode::Digit4),
+        )
+        .insert_if(
+            ScreenSpaceAmbientOcclusion {
+                quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Ultra,
+            },
+            || keycode.just_pressed(KeyCode::Digit5),
+        );
     if keycode.just_pressed(KeyCode::Digit1) {
-        commands.remove::<ScreenSpaceAmbientOcclusionSettings>();
-    }
-    if keycode.just_pressed(KeyCode::Digit2) {
-        commands.insert(ScreenSpaceAmbientOcclusionSettings {
-            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Low,
-        });
-    }
-    if keycode.just_pressed(KeyCode::Digit3) {
-        commands.insert(ScreenSpaceAmbientOcclusionSettings {
-            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Medium,
-        });
-    }
-    if keycode.just_pressed(KeyCode::Digit4) {
-        commands.insert(ScreenSpaceAmbientOcclusionSettings {
-            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
-        });
-    }
-    if keycode.just_pressed(KeyCode::Digit5) {
-        commands.insert(ScreenSpaceAmbientOcclusionSettings {
-            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::Ultra,
-        });
+        commands = commands.remove::<ScreenSpaceAmbientOcclusion>();
     }
     if keycode.just_pressed(KeyCode::Space) {
         if temporal_jitter.is_some() {
@@ -172,7 +159,7 @@ fn update(
     let text = &mut text.sections[0].value;
     text.clear();
 
-    let (o, l, m, h, u) = match ssao_settings.map(|s| s.quality_level) {
+    let (o, l, m, h, u) = match ssao.map(|s| s.quality_level) {
         None => ("*", "", "", "", ""),
         Some(ScreenSpaceAmbientOcclusionQualityLevel::Low) => ("", "*", "", "", ""),
         Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium) => ("", "", "*", "", ""),

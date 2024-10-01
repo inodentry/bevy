@@ -3,7 +3,8 @@
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash, Default, States)]
 enum GameState {
@@ -41,10 +42,7 @@ fn main() {
         .add_systems(OnEnter(GameState::GameOver), display_score)
         .add_systems(
             Update,
-            (
-                gameover_keyboard.run_if(in_state(GameState::GameOver)),
-                bevy::window::close_on_esc,
-            ),
+            gameover_keyboard.run_if(in_state(GameState::GameOver)),
         )
         .add_systems(OnExit(GameState::GameOver), teardown)
         .run();
@@ -81,6 +79,9 @@ struct Game {
     camera_is_focus: Vec3,
 }
 
+#[derive(Resource, Deref, DerefMut)]
+struct Random(ChaCha8Rng);
+
 const BOARD_SIZE_I: usize = 14;
 const BOARD_SIZE_J: usize = 21;
 
@@ -105,6 +106,14 @@ fn setup_cameras(mut commands: Commands, mut game: ResMut<Game>) {
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMut<Game>) {
+    let mut rng = if std::env::var("GITHUB_ACTIONS") == Ok("true".to_string()) {
+        // We're seeding the PRNG here to make this example deterministic for testing purposes.
+        // This isn't strictly required in practical use unless you need your app to be deterministic.
+        ChaCha8Rng::seed_from_u64(19878367467713)
+    } else {
+        ChaCha8Rng::from_entropy()
+    };
+
     // reset the game state
     game.cake_eaten = 0;
     game.score = 0;
@@ -112,24 +121,24 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMu
     game.player.j = BOARD_SIZE_J / 2;
     game.player.move_cooldown = Timer::from_seconds(0.3, TimerMode::Once);
 
-    commands.spawn(PointLightBundle {
-        transform: Transform::from_xyz(4.0, 10.0, 4.0),
-        point_light: PointLight {
-            intensity: 500_000.0,
+    commands.spawn((
+        PointLight {
+            intensity: 2_000_000.0,
             shadows_enabled: true,
             range: 30.0,
             ..default()
         },
-        ..default()
-    });
+        Transform::from_xyz(4.0, 10.0, 4.0),
+    ));
 
     // spawn the game board
-    let cell_scene = asset_server.load("models/AlienCake/tile.glb#Scene0");
+    let cell_scene =
+        asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/AlienCake/tile.glb"));
     game.board = (0..BOARD_SIZE_J)
         .map(|j| {
             (0..BOARD_SIZE_I)
                 .map(|i| {
-                    let height = rand::thread_rng().gen_range(-0.1..0.1);
+                    let height = rng.gen_range(-0.1..0.1);
                     commands.spawn(SceneBundle {
                         transform: Transform::from_xyz(i as f32, height - 0.2, j as f32),
                         scene: cell_scene.clone(),
@@ -154,22 +163,24 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMu
                     rotation: Quat::from_rotation_y(-PI / 2.),
                     ..default()
                 },
-                scene: asset_server.load("models/AlienCake/alien.glb#Scene0"),
+                scene: asset_server
+                    .load(GltfAssetLabel::Scene(0).from_asset("models/AlienCake/alien.glb")),
                 ..default()
             })
             .id(),
     );
 
     // load the scene for the cake
-    game.bonus.handle = asset_server.load("models/AlienCake/cakeBirthday.glb#Scene0");
+    game.bonus.handle =
+        asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/AlienCake/cakeBirthday.glb"));
 
     // scoreboard
     commands.spawn(
         TextBundle::from_section(
             "Score:",
             TextStyle {
-                font_size: 40.0,
-                color: Color::rgb(0.5, 0.5, 1.0),
+                font_size: 33.0,
+                color: Color::srgb(0.5, 0.5, 1.0),
                 ..default()
             },
         )
@@ -180,6 +191,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut game: ResMu
             ..default()
         }),
     );
+
+    commands.insert_resource(Random(rng));
 }
 
 // remove all entities that are not a camera or window
@@ -305,6 +318,7 @@ fn spawn_bonus(
     mut next_state: ResMut<NextState<GameState>>,
     mut commands: Commands,
     mut game: ResMut<Game>,
+    mut rng: ResMut<Random>,
 ) {
     // make sure we wait enough time before spawning the next cake
     if !timer.0.tick(time.delta()).finished() {
@@ -323,8 +337,8 @@ fn spawn_bonus(
 
     // ensure bonus doesn't spawn on the player
     loop {
-        game.bonus.i = rand::thread_rng().gen_range(0..BOARD_SIZE_I);
-        game.bonus.j = rand::thread_rng().gen_range(0..BOARD_SIZE_J);
+        game.bonus.i = rng.gen_range(0..BOARD_SIZE_I);
+        game.bonus.j = rng.gen_range(0..BOARD_SIZE_J);
         if game.bonus.i != game.player.i || game.bonus.j != game.player.j {
             break;
         }
@@ -340,18 +354,15 @@ fn spawn_bonus(
                 scene: game.bonus.handle.clone(),
                 ..default()
             })
-            .with_children(|children| {
-                children.spawn(PointLightBundle {
-                    point_light: PointLight {
-                        color: Color::rgb(1.0, 1.0, 0.0),
-                        intensity: 100_000.0,
-                        range: 10.0,
-                        ..default()
-                    },
-                    transform: Transform::from_xyz(0.0, 2.0, 0.0),
+            .with_child((
+                PointLight {
+                    color: Color::srgb(1.0, 1.0, 0.0),
+                    intensity: 500_000.0,
+                    range: 10.0,
                     ..default()
-                });
-            })
+                },
+                Transform::from_xyz(0.0, 2.0, 0.0),
+            ))
             .id(),
     );
 }
@@ -361,8 +372,9 @@ fn rotate_bonus(game: Res<Game>, time: Res<Time>, mut transforms: Query<&mut Tra
     if let Some(entity) = game.bonus.entity {
         if let Ok(mut cake_transform) = transforms.get_mut(entity) {
             cake_transform.rotate_y(time.delta_seconds());
-            cake_transform.scale =
-                Vec3::splat(1.0 + (game.score as f32 / 10.0 * time.elapsed_seconds().sin()).abs());
+            cake_transform.scale = Vec3::splat(
+                1.0 + (game.score as f32 / 10.0 * ops::sin(time.elapsed_seconds())).abs(),
+            );
         }
     }
 }
@@ -399,8 +411,8 @@ fn display_score(mut commands: Commands, game: Res<Game>) {
             parent.spawn(TextBundle::from_section(
                 format!("Cake eaten: {}", game.cake_eaten),
                 TextStyle {
-                    font_size: 80.0,
-                    color: Color::rgb(0.5, 0.5, 1.0),
+                    font_size: 67.0,
+                    color: Color::srgb(0.5, 0.5, 1.0),
                     ..default()
                 },
             ));

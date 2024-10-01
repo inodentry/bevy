@@ -1,16 +1,17 @@
 //! Representation for individual element accesses within a path.
 
-use std::{borrow::Cow, fmt};
+use alloc::borrow::Cow;
+use core::fmt;
 
-use super::error::{AccessErrorKind, TypeKind};
-use crate::{AccessError, Reflect, ReflectMut, ReflectRef, VariantType};
+use super::error::AccessErrorKind;
+use crate::{AccessError, PartialReflect, ReflectKind, ReflectMut, ReflectRef, VariantType};
 
 type InnerResult<T> = Result<T, AccessErrorKind>;
 
 /// A singular element access within a path.
 /// Multiple accesses can be combined into a [`ParsedPath`](super::ParsedPath).
 ///
-/// Can be applied to a [`dyn Reflect`](Reflect) to get a reference to the targeted element.
+/// Can be applied to a [`dyn Reflect`](crate::Reflect) to get a reference to the targeted element.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Access<'a> {
     /// A name-based field access on a struct.
@@ -38,7 +39,7 @@ impl<'a> Access<'a> {
     /// Converts this into an "owned" value.
     ///
     /// If the [`Access`] is of variant [`Field`](Access::Field),
-    /// the field's [`Cow<str>`] will be converted to it's owned
+    /// the field's [`Cow<str>`] will be converted to its owned
     /// counterpart, which doesn't require a reference.
     pub fn into_owned(self) -> Access<'static> {
         match self {
@@ -51,15 +52,18 @@ impl<'a> Access<'a> {
 
     pub(super) fn element<'r>(
         &self,
-        base: &'r dyn Reflect,
+        base: &'r dyn PartialReflect,
         offset: Option<usize>,
-    ) -> Result<&'r dyn Reflect, AccessError<'a>> {
+    ) -> Result<&'r dyn PartialReflect, AccessError<'a>> {
         self.element_inner(base)
-            .and_then(|opt| opt.ok_or(AccessErrorKind::MissingField(base.into())))
+            .and_then(|opt| opt.ok_or(AccessErrorKind::MissingField(base.reflect_kind())))
             .map_err(|err| err.with_access(self.clone(), offset))
     }
 
-    fn element_inner<'r>(&self, base: &'r dyn Reflect) -> InnerResult<Option<&'r dyn Reflect>> {
+    fn element_inner<'r>(
+        &self,
+        base: &'r dyn PartialReflect,
+    ) -> InnerResult<Option<&'r dyn PartialReflect>> {
         use ReflectRef::*;
 
         let invalid_variant =
@@ -78,7 +82,7 @@ impl<'a> Access<'a> {
             },
             (Self::Field(_) | Self::FieldIndex(_), actual) => {
                 Err(AccessErrorKind::IncompatibleTypes {
-                    expected: TypeKind::Struct,
+                    expected: ReflectKind::Struct,
                     actual: actual.into(),
                 })
             }
@@ -90,14 +94,14 @@ impl<'a> Access<'a> {
                 actual => Err(invalid_variant(VariantType::Tuple, actual)),
             },
             (Self::TupleIndex(_), actual) => Err(AccessErrorKind::IncompatibleTypes {
-                expected: TypeKind::Tuple,
+                expected: ReflectKind::Tuple,
                 actual: actual.into(),
             }),
 
             (&Self::ListIndex(index), List(list)) => Ok(list.get(index)),
             (&Self::ListIndex(index), Array(list)) => Ok(list.get(index)),
             (Self::ListIndex(_), actual) => Err(AccessErrorKind::IncompatibleTypes {
-                expected: TypeKind::List,
+                expected: ReflectKind::List,
                 actual: actual.into(),
             }),
         }
@@ -105,10 +109,10 @@ impl<'a> Access<'a> {
 
     pub(super) fn element_mut<'r>(
         &self,
-        base: &'r mut dyn Reflect,
+        base: &'r mut dyn PartialReflect,
         offset: Option<usize>,
-    ) -> Result<&'r mut dyn Reflect, AccessError<'a>> {
-        let kind = base.into();
+    ) -> Result<&'r mut dyn PartialReflect, AccessError<'a>> {
+        let kind = base.reflect_kind();
 
         self.element_inner_mut(base)
             .and_then(|maybe| maybe.ok_or(AccessErrorKind::MissingField(kind)))
@@ -117,8 +121,8 @@ impl<'a> Access<'a> {
 
     fn element_inner_mut<'r>(
         &self,
-        base: &'r mut dyn Reflect,
-    ) -> InnerResult<Option<&'r mut dyn Reflect>> {
+        base: &'r mut dyn PartialReflect,
+    ) -> InnerResult<Option<&'r mut dyn PartialReflect>> {
         use ReflectMut::*;
 
         let invalid_variant =
@@ -137,7 +141,7 @@ impl<'a> Access<'a> {
             },
             (Self::Field(_) | Self::FieldIndex(_), actual) => {
                 Err(AccessErrorKind::IncompatibleTypes {
-                    expected: TypeKind::Struct,
+                    expected: ReflectKind::Struct,
                     actual: actual.into(),
                 })
             }
@@ -149,14 +153,14 @@ impl<'a> Access<'a> {
                 actual => Err(invalid_variant(VariantType::Tuple, actual)),
             },
             (Self::TupleIndex(_), actual) => Err(AccessErrorKind::IncompatibleTypes {
-                expected: TypeKind::Tuple,
+                expected: ReflectKind::Tuple,
                 actual: actual.into(),
             }),
 
             (&Self::ListIndex(index), List(list)) => Ok(list.get_mut(index)),
             (&Self::ListIndex(index), Array(list)) => Ok(list.get_mut(index)),
             (Self::ListIndex(_), actual) => Err(AccessErrorKind::IncompatibleTypes {
-                expected: TypeKind::List,
+                expected: ReflectKind::List,
                 actual: actual.into(),
             }),
         }

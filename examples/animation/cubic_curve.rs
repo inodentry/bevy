@@ -1,7 +1,8 @@
 //! Demonstrates how to work with Cubic curves.
 
 use bevy::{
-    math::{cubic_splines::CubicCurve, vec3},
+    color::palettes::css::{ORANGE, SILVER, WHITE},
+    math::vec3,
     prelude::*,
 };
 
@@ -33,13 +34,13 @@ fn setup(
     ]];
 
     // Make a CubicCurve
-    let bezier = CubicBezier::new(points).to_curve();
+    let bezier = CubicBezier::new(points).to_curve().unwrap();
 
     // Spawning a cube to experiment on
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(shape::Cube::default()),
-            material: materials.add(Color::ORANGE),
+            mesh: meshes.add(Cuboid::default()),
+            material: materials.add(Color::from(ORANGE)),
             transform: Transform::from_translation(points[0][0]),
             ..default()
         },
@@ -47,21 +48,20 @@ fn setup(
     ));
 
     // Some light to see something
-    commands.spawn(PointLightBundle {
-        point_light: PointLight {
-            intensity: 1_500_000.,
-            range: 100.,
+    commands.spawn((
+        PointLight {
             shadows_enabled: true,
+            intensity: 10_000_000.,
+            range: 100.0,
             ..default()
         },
-        transform: Transform::from_xyz(8., 16., 8.),
-        ..default()
-    });
+        Transform::from_xyz(8., 16., 8.),
+    ));
 
     // ground plane
     commands.spawn(PbrBundle {
-        mesh: meshes.add(shape::Plane::from_size(50.)),
-        material: materials.add(Color::SILVER),
+        mesh: meshes.add(Plane3d::default().mesh().size(50., 50.)),
+        material: materials.add(Color::from(SILVER)),
         ..default()
     });
 
@@ -73,11 +73,11 @@ fn setup(
 }
 
 fn animate_cube(time: Res<Time>, mut query: Query<(&mut Transform, &Curve)>, mut gizmos: Gizmos) {
-    let t = (time.elapsed_seconds().sin() + 1.) / 2.;
+    let t = (ops::sin(time.elapsed_seconds()) + 1.) / 2.;
 
     for (mut transform, cubic_curve) in &mut query {
         // Draw the curve
-        gizmos.linestrip(cubic_curve.0.iter_positions(50), Color::WHITE);
+        gizmos.linestrip(cubic_curve.0.iter_positions(50), WHITE);
         // position takes a point from the curve where 0 is the initial point
         // and 1 is the last point
         transform.translation = cubic_curve.0.position(t);

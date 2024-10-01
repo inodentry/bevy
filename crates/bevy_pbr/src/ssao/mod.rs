@@ -1,7 +1,8 @@
+use crate::NodePbr;
 use bevy_app::{App, Plugin};
 use bevy_asset::{load_internal_asset, Handle};
 use bevy_core_pipeline::{
-    core_3d::graph::{Labels3d, SubGraph3d},
+    core_3d::graph::{Core3d, Node3d},
     prelude::Camera3d,
     prepass::{DepthPrepass, NormalPrepass, ViewPrepassTextures},
 };
@@ -13,7 +14,7 @@ use bevy_ecs::{
     system::{Commands, Query, Res, ResMut, Resource},
     world::{FromWorld, World},
 };
-use bevy_reflect::Reflect;
+use bevy_reflect::{std_traits::ReflectDefault, Reflect};
 use bevy_render::{
     camera::{ExtractedCamera, TemporalJitter},
     extract_component::ExtractComponent,
@@ -29,15 +30,14 @@ use bevy_render::{
     renderer::{RenderAdapter, RenderContext, RenderDevice, RenderQueue},
     texture::{CachedTexture, TextureCache},
     view::{Msaa, ViewUniform, ViewUniformOffset, ViewUniforms},
+    world_sync::RenderEntity,
     Extract, ExtractSchedule, Render, RenderApp, RenderSet,
 };
 use bevy_utils::{
     prelude::default,
     tracing::{error, warn},
 };
-use std::mem;
-
-use crate::LabelsPbr;
+use core::mem;
 
 const PREPROCESS_DEPTH_SHADER_HANDLE: Handle<Shader> = Handle::weak_from_u128(102258915420479);
 const GTAO_SHADER_HANDLE: Handle<Shader> = Handle::weak_from_u128(253938746510568);
@@ -69,16 +69,16 @@ impl Plugin for ScreenSpaceAmbientOcclusionPlugin {
             Shader::from_wgsl
         );
 
-        app.register_type::<ScreenSpaceAmbientOcclusionSettings>();
+        app.register_type::<ScreenSpaceAmbientOcclusion>();
     }
 
     fn finish(&self, app: &mut App) {
-        let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
         if !render_app
-            .world
+            .world()
             .resource::<RenderAdapter>()
             .get_texture_format_features(TextureFormat::R16Float)
             .allowed_usages
@@ -89,7 +89,7 @@ impl Plugin for ScreenSpaceAmbientOcclusionPlugin {
         }
 
         if render_app
-            .world
+            .world()
             .resource::<RenderDevice>()
             .limits()
             .max_storage_textures_per_shader_stage
@@ -112,25 +112,25 @@ impl Plugin for ScreenSpaceAmbientOcclusionPlugin {
                 ),
             )
             .add_render_graph_node::<ViewNodeRunner<SsaoNode>>(
-                SubGraph3d,
-                LabelsPbr::ScreenSpaceAmbientOcclusion,
+                Core3d,
+                NodePbr::ScreenSpaceAmbientOcclusion,
             )
             .add_render_graph_edges(
-                SubGraph3d,
+                Core3d,
                 (
                     // END_PRE_PASSES -> SCREEN_SPACE_AMBIENT_OCCLUSION -> MAIN_PASS
-                    Labels3d::EndPrepasses,
-                    LabelsPbr::ScreenSpaceAmbientOcclusion,
-                    Labels3d::StartMainPass,
+                    Node3d::EndPrepasses,
+                    NodePbr::ScreenSpaceAmbientOcclusion,
+                    Node3d::StartMainPass,
                 ),
             );
     }
 }
 
 /// Bundle to apply screen space ambient occlusion.
-#[derive(Bundle, Default)]
+#[derive(Bundle, Default, Clone)]
 pub struct ScreenSpaceAmbientOcclusionBundle {
-    pub settings: ScreenSpaceAmbientOcclusionSettings,
+    pub settings: ScreenSpaceAmbientOcclusion,
     pub depth_prepass: DepthPrepass,
     pub normal_prepass: NormalPrepass,
 }
@@ -150,17 +150,21 @@ pub struct ScreenSpaceAmbientOcclusionBundle {
 /// and add the [`DepthPrepass`] and [`NormalPrepass`] components to your camera.
 ///
 /// It strongly recommended that you use SSAO in conjunction with
-/// TAA ([`bevy_core_pipeline::experimental::taa::TemporalAntiAliasSettings`]).
+/// TAA ([`bevy_core_pipeline::experimental::taa::TemporalAntiAliasing`]).
 /// Doing so greatly reduces SSAO noise.
 ///
 /// SSAO is not supported on `WebGL2`, and is not currently supported on `WebGPU` or `DirectX12`.
-#[derive(Component, ExtractComponent, Reflect, PartialEq, Eq, Hash, Clone, Default)]
-#[reflect(Component)]
-pub struct ScreenSpaceAmbientOcclusionSettings {
+#[derive(Component, ExtractComponent, Reflect, PartialEq, Eq, Hash, Clone, Default, Debug)]
+#[reflect(Component, Debug, Default, Hash, PartialEq)]
+#[doc(alias = "Ssao")]
+pub struct ScreenSpaceAmbientOcclusion {
     pub quality_level: ScreenSpaceAmbientOcclusionQualityLevel,
 }
 
-#[derive(Reflect, PartialEq, Eq, Hash, Clone, Copy, Default)]
+#[deprecated(since = "0.15.0", note = "Renamed to `ScreenSpaceAmbientOcclusion`")]
+pub type ScreenSpaceAmbientOcclusionSettings = ScreenSpaceAmbientOcclusion;
+
+#[derive(Reflect, PartialEq, Eq, Hash, Clone, Copy, Default, Debug)]
 pub enum ScreenSpaceAmbientOcclusionQualityLevel {
     Low,
     Medium,
@@ -445,7 +449,7 @@ impl FromWorld for SsaoPipelines {
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 struct SsaoPipelineKey {
-    ssao_settings: ScreenSpaceAmbientOcclusionSettings,
+    ssao_settings: ScreenSpaceAmbientOcclusion,
     temporal_jitter: bool,
 }
 
@@ -485,23 +489,23 @@ fn extract_ssao_settings(
     mut commands: Commands,
     cameras: Extract<
         Query<
-            (Entity, &Camera, &ScreenSpaceAmbientOcclusionSettings),
+            (&RenderEntity, &Camera, &ScreenSpaceAmbientOcclusion, &Msaa),
             (With<Camera3d>, With<DepthPrepass>, With<NormalPrepass>),
         >,
     >,
-    msaa: Extract<Res<Msaa>>,
 ) {
-    for (entity, camera, ssao_settings) in &cameras {
-        if **msaa != Msaa::Off {
+    for (entity, camera, ssao_settings, msaa) in &cameras {
+        if *msaa != Msaa::Off {
             error!(
                 "SSAO is being used which requires Msaa::Off, but Msaa is currently set to Msaa::{:?}",
-                **msaa
+                *msaa
             );
             return;
         }
-
         if camera.is_active {
-            commands.get_or_spawn(entity).insert(ssao_settings.clone());
+            commands
+                .get_or_spawn(entity.id())
+                .insert(ssao_settings.clone());
         }
     }
 }
@@ -518,7 +522,7 @@ fn prepare_ssao_textures(
     mut commands: Commands,
     mut texture_cache: ResMut<TextureCache>,
     render_device: Res<RenderDevice>,
-    views: Query<(Entity, &ExtractedCamera), With<ScreenSpaceAmbientOcclusionSettings>>,
+    views: Query<(Entity, &ExtractedCamera), With<ScreenSpaceAmbientOcclusion>>,
 ) {
     for (entity, camera) in &views {
         let Some(physical_viewport_size) = camera.physical_viewport_size else {
@@ -605,11 +609,7 @@ fn prepare_ssao_pipelines(
     pipeline_cache: Res<PipelineCache>,
     mut pipelines: ResMut<SpecializedComputePipelines<SsaoPipelines>>,
     pipeline: Res<SsaoPipelines>,
-    views: Query<(
-        Entity,
-        &ScreenSpaceAmbientOcclusionSettings,
-        Has<TemporalJitter>,
-    )>,
+    views: Query<(Entity, &ScreenSpaceAmbientOcclusion, Has<TemporalJitter>)>,
 ) {
     for (entity, ssao_settings, temporal_jitter) in &views {
         let pipeline_id = pipelines.specialize(

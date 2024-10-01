@@ -1,6 +1,5 @@
 //! This example demonstrates how to use the `Camera::viewport_to_world` method.
 
-use bevy::math::primitives::Direction3d;
 use bevy::prelude::*;
 
 fn main() {
@@ -25,12 +24,13 @@ fn draw_cursor(
     };
 
     // Calculate a ray pointing from the camera into the world based on the cursor's position.
-    let Some(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
         return;
     };
 
     // Calculate if and where the ray is hitting the ground plane.
-    let Some(distance) = ray.intersect_plane(ground.translation(), Plane3d::new(ground.up()))
+    let Some(distance) =
+        ray.intersect_plane(ground.translation(), InfinitePlane3d::new(ground.up()))
     else {
         return;
     };
@@ -38,8 +38,10 @@ fn draw_cursor(
 
     // Draw a circle just above the ground plane at that position.
     gizmos.circle(
-        point + ground.up() * 0.01,
-        Direction3d::new_unchecked(ground.up()), // Up vector is already normalized.
+        Isometry3d::new(
+            point + ground.up() * 0.01,
+            Quat::from_rotation_arc(Vec3::Z, ground.up().as_vec3()),
+        ),
         0.2,
         Color::WHITE,
     );
@@ -56,22 +58,18 @@ fn setup(
     // plane
     commands.spawn((
         PbrBundle {
-            mesh: meshes.add(shape::Plane::from_size(20.)),
-            material: materials.add(Color::rgb(0.3, 0.5, 0.3)),
+            mesh: meshes.add(Plane3d::default().mesh().size(20., 20.)),
+            material: materials.add(Color::srgb(0.3, 0.5, 0.3)),
             ..default()
         },
         Ground,
     ));
 
     // light
-    commands.spawn(DirectionalLightBundle {
-        transform: Transform::from_translation(Vec3::ONE).looking_at(Vec3::ZERO, Vec3::Y),
-        directional_light: DirectionalLight {
-            illuminance: 2000.0,
-            ..default()
-        },
-        ..default()
-    });
+    commands.spawn((
+        DirectionalLight::default(),
+        Transform::from_translation(Vec3::ONE).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
 
     // camera
     commands.spawn(Camera3dBundle {

@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-const TEXT_COLOR: Color = Color::rgb(0.9, 0.9, 0.9);
+const TEXT_COLOR: Color = Color::srgb(0.9, 0.9, 0.9);
 
 // Enum that will be used as a global state for the game
 #[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, States)]
@@ -115,7 +115,10 @@ mod splash {
 }
 
 mod game {
-    use bevy::prelude::*;
+    use bevy::{
+        color::palettes::basic::{BLUE, LIME},
+        prelude::*,
+    };
 
     use super::{despawn_screen, DisplayQuality, GameState, Volume, TEXT_COLOR};
 
@@ -176,7 +179,7 @@ mod game {
                             TextBundle::from_section(
                                 "Will be back to the menu shortly...",
                                 TextStyle {
-                                    font_size: 80.0,
+                                    font_size: 67.0,
                                     color: TEXT_COLOR,
                                     ..default()
                                 },
@@ -191,15 +194,15 @@ mod game {
                                 TextSection::new(
                                     format!("quality: {:?}", *display_quality),
                                     TextStyle {
-                                        font_size: 60.0,
-                                        color: Color::BLUE,
+                                        font_size: 50.0,
+                                        color: BLUE.into(),
                                         ..default()
                                     },
                                 ),
                                 TextSection::new(
                                     " - ",
                                     TextStyle {
-                                        font_size: 60.0,
+                                        font_size: 50.0,
                                         color: TEXT_COLOR,
                                         ..default()
                                     },
@@ -207,8 +210,8 @@ mod game {
                                 TextSection::new(
                                     format!("volume: {:?}", *volume),
                                     TextStyle {
-                                        font_size: 60.0,
-                                        color: Color::GREEN,
+                                        font_size: 50.0,
+                                        color: LIME.into(),
                                         ..default()
                                     },
                                 ),
@@ -237,7 +240,7 @@ mod game {
 }
 
 mod menu {
-    use bevy::{app::AppExit, prelude::*};
+    use bevy::{app::AppExit, color::palettes::css::CRIMSON, prelude::*};
 
     use super::{despawn_screen, DisplayQuality, GameState, Volume, TEXT_COLOR};
 
@@ -318,10 +321,10 @@ mod menu {
     #[derive(Component)]
     struct OnSoundSettingsMenuScreen;
 
-    const NORMAL_BUTTON: Color = Color::rgb(0.15, 0.15, 0.15);
-    const HOVERED_BUTTON: Color = Color::rgb(0.25, 0.25, 0.25);
-    const HOVERED_PRESSED_BUTTON: Color = Color::rgb(0.25, 0.65, 0.25);
-    const PRESSED_BUTTON: Color = Color::rgb(0.35, 0.75, 0.35);
+    const NORMAL_BUTTON: Color = Color::srgb(0.15, 0.15, 0.15);
+    const HOVERED_BUTTON: Color = Color::srgb(0.25, 0.25, 0.25);
+    const HOVERED_PRESSED_BUTTON: Color = Color::srgb(0.25, 0.65, 0.25);
+    const PRESSED_BUTTON: Color = Color::srgb(0.35, 0.75, 0.35);
 
     // Tag component used to mark which setting is currently selected
     #[derive(Component)]
@@ -346,8 +349,8 @@ mod menu {
             (Changed<Interaction>, With<Button>),
         >,
     ) {
-        for (interaction, mut color, selected) in &mut interaction_query {
-            *color = match (*interaction, selected) {
+        for (interaction, mut background_color, selected) in &mut interaction_query {
+            *background_color = match (*interaction, selected) {
                 (Interaction::Pressed, _) | (Interaction::None, Some(_)) => PRESSED_BUTTON.into(),
                 (Interaction::Hovered, Some(_)) => HOVERED_PRESSED_BUTTON.into(),
                 (Interaction::Hovered, None) => HOVERED_BUTTON.into(),
@@ -366,8 +369,8 @@ mod menu {
     ) {
         for (interaction, button_setting, entity) in &interaction_query {
             if *interaction == Interaction::Pressed && *setting != *button_setting {
-                let (previous_button, mut previous_color) = selected_query.single_mut();
-                *previous_color = NORMAL_BUTTON.into();
+                let (previous_button, mut previous_button_color) = selected_query.single_mut();
+                *previous_button_color = NORMAL_BUTTON.into();
                 commands.entity(previous_button).remove::<SelectedOption>();
                 commands.entity(entity).insert(SelectedOption);
                 *setting = *button_setting;
@@ -382,7 +385,7 @@ mod menu {
     fn main_menu_setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         // Common style for all buttons on the screen
         let button_style = Style {
-            width: Val::Px(250.0),
+            width: Val::Px(300.0),
             height: Val::Px(65.0),
             margin: UiRect::all(Val::Px(20.0)),
             justify_content: JustifyContent::Center,
@@ -398,7 +401,7 @@ mod menu {
             ..default()
         };
         let button_text_style = TextStyle {
-            font_size: 40.0,
+            font_size: 33.0,
             color: TEXT_COLOR,
             ..default()
         };
@@ -425,7 +428,7 @@ mod menu {
                             align_items: AlignItems::Center,
                             ..default()
                         },
-                        background_color: Color::CRIMSON.into(),
+                        background_color: CRIMSON.into(),
                         ..default()
                     })
                     .with_children(|parent| {
@@ -434,7 +437,7 @@ mod menu {
                             TextBundle::from_section(
                                 "Bevy Game Menu UI",
                                 TextStyle {
-                                    font_size: 80.0,
+                                    font_size: 67.0,
                                     color: TEXT_COLOR,
                                     ..default()
                                 },
@@ -524,7 +527,7 @@ mod menu {
         };
 
         let button_text_style = TextStyle {
-            font_size: 40.0,
+            font_size: 33.0,
             color: TEXT_COLOR,
             ..default()
         };
@@ -551,7 +554,7 @@ mod menu {
                             align_items: AlignItems::Center,
                             ..default()
                         },
-                        background_color: Color::CRIMSON.into(),
+                        background_color: CRIMSON.into(),
                         ..default()
                     })
                     .with_children(|parent| {
@@ -590,7 +593,7 @@ mod menu {
             ..default()
         };
         let button_text_style = TextStyle {
-            font_size: 40.0,
+            font_size: 33.0,
             color: TEXT_COLOR,
             ..default()
         };
@@ -617,7 +620,7 @@ mod menu {
                             align_items: AlignItems::Center,
                             ..default()
                         },
-                        background_color: Color::CRIMSON.into(),
+                        background_color: CRIMSON.into(),
                         ..default()
                     })
                     .with_children(|parent| {
@@ -629,7 +632,7 @@ mod menu {
                                     align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                background_color: Color::CRIMSON.into(),
+                                background_color: CRIMSON.into(),
                                 ..default()
                             })
                             .with_children(|parent| {
@@ -694,7 +697,7 @@ mod menu {
             ..default()
         };
         let button_text_style = TextStyle {
-            font_size: 40.0,
+            font_size: 33.0,
             color: TEXT_COLOR,
             ..default()
         };
@@ -721,7 +724,7 @@ mod menu {
                             align_items: AlignItems::Center,
                             ..default()
                         },
-                        background_color: Color::CRIMSON.into(),
+                        background_color: CRIMSON.into(),
                         ..default()
                     })
                     .with_children(|parent| {
@@ -731,7 +734,7 @@ mod menu {
                                     align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                background_color: Color::CRIMSON.into(),
+                                background_color: CRIMSON.into(),
                                 ..default()
                             })
                             .with_children(|parent| {
@@ -740,7 +743,7 @@ mod menu {
                                     button_text_style.clone(),
                                 ));
                                 for volume_setting in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] {
-                                    let mut entity = parent.spawn((
+                                    let entity = parent.spawn((
                                         ButtonBundle {
                                             style: Style {
                                                 width: Val::Px(30.0),
@@ -786,7 +789,7 @@ mod menu {
             if *interaction == Interaction::Pressed {
                 match menu_button_action {
                     MenuButtonAction::Quit => {
-                        app_exit_events.send(AppExit);
+                        app_exit_events.send(AppExit::Success);
                     }
                     MenuButtonAction::Play => {
                         game_state.set(GameState::Game);

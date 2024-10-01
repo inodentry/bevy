@@ -1,3 +1,10 @@
+#![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![doc(
+    html_logo_url = "https://bevyengine.org/assets/icon.png",
+    html_favicon_url = "https://bevyengine.org/assets/icon.png"
+)]
+
 //! Audio support for the game engine Bevy
 //!
 //! ```no_run
@@ -20,7 +27,7 @@
 //! }
 //! ```
 
-#![forbid(unsafe_code)]
+extern crate alloc;
 
 mod audio;
 mod audio_output;
@@ -28,7 +35,9 @@ mod audio_source;
 mod pitch;
 mod sinks;
 
-#[allow(missing_docs)]
+/// The audio prelude.
+///
+/// This includes the most common types in this crate, re-exported for your convenience.
 pub mod prelude {
     #[doc(hidden)]
     pub use crate::{
@@ -41,9 +50,7 @@ pub use audio::*;
 pub use audio_source::*;
 pub use pitch::*;
 
-pub use rodio::cpal::Sample as CpalSample;
-pub use rodio::source::Source;
-pub use rodio::Sample;
+pub use rodio::{cpal::Sample as CpalSample, source::Source, Sample};
 pub use sinks::*;
 
 use bevy_app::prelude::*;

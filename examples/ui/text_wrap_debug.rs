@@ -1,10 +1,7 @@
 //! This example demonstrates text wrapping and use of the `LineBreakOn` property.
 
 use argh::FromArgs;
-use bevy::prelude::*;
-use bevy::text::BreakLineOn;
-use bevy::window::WindowResolution;
-use bevy::winit::WinitSettings;
+use bevy::{prelude::*, text::BreakLineOn, window::WindowResolution, winit::WinitSettings};
 
 #[derive(FromArgs, Resource)]
 /// `text_wrap_debug` demonstrates text wrapping and use of the `LineBreakOn` property
@@ -50,7 +47,7 @@ fn spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     let text_style = TextStyle {
         font: asset_server.load("fonts/FiraSans-Bold.ttf"),
-        font_size: 14.0,
+        font_size: 12.0,
         ..default()
     };
 
@@ -70,6 +67,7 @@ fn spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
     for linebreak_behavior in [
         BreakLineOn::AnyCharacter,
         BreakLineOn::WordBoundary,
+        BreakLineOn::WordOrCharacter,
         BreakLineOn::NoWrap,
     ] {
         let row_id = commands
@@ -107,7 +105,7 @@ fn spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
                         overflow: Overflow::clip_x(),
                         ..Default::default()
                     },
-                    background_color: Color::rgb(0.5, c, 1.0 - c).into(),
+                    background_color: Color::srgb(0.5, c, 1.0 - c).into(),
                     ..Default::default()
                 })
                 .id();
@@ -115,8 +113,9 @@ fn spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
             let messages = [
                 format!("JustifyContent::{justification:?}"),
                 format!("LineBreakOn::{linebreak_behavior:?}"),
-                "Line 1\nLine 2\nLine 3".to_string(),
+                "Line 1\nLine 2".to_string(),
                 "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Maecenas auctor, nunc ac faucibus fringilla.".to_string(),
+                "pneumonoultramicroscopicsilicovolcanoconiosis".to_string()
             ];
 
             for (j, message) in messages.into_iter().enumerate() {
@@ -127,11 +126,12 @@ fn spawn(mut commands: Commands, asset_server: Res<AssetServer>) {
                     }],
                     justify: JustifyText::Left,
                     linebreak_behavior,
+                    ..default()
                 };
                 let text_id = commands
                     .spawn(TextBundle {
                         text,
-                        background_color: Color::rgb(0.8 - j as f32 * 0.2, 0., 0.).into(),
+                        background_color: Color::srgb(0.8 - j as f32 * 0.2, 0., 0.).into(),
                         ..Default::default()
                     })
                     .id();

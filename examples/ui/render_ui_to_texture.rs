@@ -3,12 +3,12 @@
 use std::f32::consts::PI;
 
 use bevy::{
+    color::palettes::css::GOLD,
     prelude::*,
     render::{
         camera::RenderTarget,
-        render_resource::{
-            Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
-        },
+        render_asset::RenderAssetUsages,
+        render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
     },
 };
 
@@ -37,42 +37,25 @@ fn setup(
     };
 
     // This is the texture that will be rendered to.
-    let mut image = Image {
-        texture_descriptor: TextureDescriptor {
-            label: None,
-            size,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Bgra8UnormSrgb,
-            mip_level_count: 1,
-            sample_count: 1,
-            usage: TextureUsages::TEXTURE_BINDING
-                | TextureUsages::COPY_DST
-                | TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        },
-        ..default()
-    };
-
-    // fill image.data with zeroes
-    image.resize(size);
+    let mut image = Image::new_fill(
+        size,
+        TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Bgra8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    // You need to set these texture usage flags in order to use the image as a render target
+    image.texture_descriptor.usage =
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
 
     let image_handle = images.add(image);
 
     // Light
-    commands.spawn(PointLightBundle {
-        point_light: PointLight {
-            intensity: 500_000.0,
-            ..default()
-        },
-        transform: Transform::from_translation(Vec3::new(0.0, 0.0, 10.0)),
-        ..default()
-    });
+    commands.spawn(DirectionalLight::default());
 
     let texture_camera = commands
         .spawn(Camera2dBundle {
             camera: Camera {
-                // render before the "main pass" camera
-                order: -1,
                 target: RenderTarget::Image(image_handle.clone()),
                 ..default()
             },
@@ -92,7 +75,7 @@ fn setup(
                     align_items: AlignItems::Center,
                     ..default()
                 },
-                background_color: Color::GOLD.into(),
+                background_color: GOLD.into(),
                 ..default()
             },
             TargetCamera(texture_camera),
@@ -109,7 +92,7 @@ fn setup(
         });
 
     let cube_size = 4.0;
-    let cube_handle = meshes.add(Mesh::from(shape::Box::new(cube_size, cube_size, cube_size)));
+    let cube_handle = meshes.add(Cuboid::new(cube_size, cube_size, cube_size));
 
     // This material has the texture that has been rendered.
     let material_handle = materials.add(StandardMaterial {

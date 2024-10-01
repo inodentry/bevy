@@ -25,13 +25,13 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         EnvironmentMapLight {
             diffuse_map: asset_server.load("environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
             specular_map: asset_server.load("environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
-            intensity: 150.0,
+            intensity: 250.0,
+            ..default()
         },
     ));
 
-    commands.spawn(DirectionalLightBundle {
-        directional_light: DirectionalLight {
-            illuminance: 2000.0,
+    commands.spawn((
+        DirectionalLight {
             shadows_enabled: true,
             ..default()
         },
@@ -39,16 +39,16 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         // cascade bounds than the default for better quality.
         // We also adjusted the shadow map to be larger since we're
         // only using a single cascade.
-        cascade_shadow_config: CascadeShadowConfigBuilder {
+        CascadeShadowConfigBuilder {
             num_cascades: 1,
             maximum_distance: 1.6,
             ..default()
         }
-        .into(),
-        ..default()
-    });
+        .build(),
+    ));
     commands.spawn(SceneBundle {
-        scene: asset_server.load("models/FlightHelmet/FlightHelmet.gltf#Scene0"),
+        scene: asset_server
+            .load(GltfAssetLabel::Scene(0).from_asset("models/FlightHelmet/FlightHelmet.gltf")),
         ..default()
     });
 }

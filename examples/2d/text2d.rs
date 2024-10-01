@@ -6,9 +6,11 @@
 //! viewport, you may want to look at `games/contributors.rs` or `ui/text.rs`.
 
 use bevy::{
+    color::palettes::css::*,
+    math::ops,
     prelude::*,
     sprite::Anchor,
-    text::{BreakLineOn, Text2dBounds},
+    text::{BreakLineOn, FontSmoothing, TextBounds},
 };
 
 fn main() {
@@ -35,8 +37,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = asset_server.load("fonts/FiraSans-Bold.ttf");
     let text_style = TextStyle {
         font: font.clone(),
-        font_size: 60.0,
-        color: Color::WHITE,
+        font_size: 50.0,
+        ..default()
     };
     let text_justification = JustifyText::Center;
     // 2d camera
@@ -63,6 +65,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         Text2dBundle {
             text: Text::from_section("scale", text_style).with_justify(text_justification),
+            transform: Transform::from_translation(Vec3::new(400.0, 0.0, 0.0)),
             ..default()
         },
         AnimateScale,
@@ -70,15 +73,15 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     // Demonstrate text wrapping
     let slightly_smaller_text_style = TextStyle {
         font,
-        font_size: 42.0,
-        color: Color::WHITE,
+        font_size: 35.0,
+        ..default()
     };
     let box_size = Vec2::new(300.0, 200.0);
     let box_position = Vec2::new(0.0, -250.0);
     commands
         .spawn(SpriteBundle {
             sprite: Sprite {
-                color: Color::rgb(0.25, 0.25, 0.75),
+                color: Color::srgb(0.25, 0.25, 0.75),
                 custom_size: Some(Vec2::new(box_size.x, box_size.y)),
                 ..default()
             },
@@ -94,11 +97,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     )],
                     justify: JustifyText::Left,
                     linebreak_behavior: BreakLineOn::WordBoundary,
+                    ..default()
                 },
-                text_2d_bounds: Text2dBounds {
-                    // Wrap text in the rectangle
-                    size: box_size,
-                },
+                // Wrap text in the rectangle
+                text_2d_bounds: TextBounds::from(box_size),
                 // ensure the text is drawn on top of the box
                 transform: Transform::from_translation(Vec3::Z),
                 ..default()
@@ -110,7 +112,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn(SpriteBundle {
             sprite: Sprite {
-                color: Color::rgb(0.20, 0.3, 0.70),
+                color: Color::srgb(0.20, 0.3, 0.70),
                 custom_size: Some(Vec2::new(other_box_size.x, other_box_size.y)),
                 ..default()
             },
@@ -126,22 +128,29 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     )],
                     justify: JustifyText::Left,
                     linebreak_behavior: BreakLineOn::AnyCharacter,
+                    ..default()
                 },
-                text_2d_bounds: Text2dBounds {
-                    // Wrap text in the rectangle
-                    size: other_box_size,
-                },
+                // Wrap text in the rectangle
+                text_2d_bounds: TextBounds::from(other_box_size),
                 // ensure the text is drawn on top of the box
                 transform: Transform::from_translation(Vec3::Z),
                 ..default()
             });
         });
 
+    // Demonstrate font smoothing off
+    commands.spawn(Text2dBundle {
+        text: Text::from_section("FontSmoothing::None", slightly_smaller_text_style.clone())
+            .with_font_smoothing(FontSmoothing::None),
+        transform: Transform::from_translation(Vec3::new(-400.0, -250.0, 0.0)),
+        ..default()
+    });
+
     for (text_anchor, color) in [
-        (Anchor::TopLeft, Color::RED),
-        (Anchor::TopRight, Color::GREEN),
-        (Anchor::BottomRight, Color::BLUE),
-        (Anchor::BottomLeft, Color::YELLOW),
+        (Anchor::TopLeft, Color::Srgba(RED)),
+        (Anchor::TopRight, Color::Srgba(LIME)),
+        (Anchor::BottomRight, Color::Srgba(BLUE)),
+        (Anchor::BottomLeft, Color::Srgba(YELLOW)),
     ] {
         commands.spawn(Text2dBundle {
             text: Text {
@@ -166,8 +175,8 @@ fn animate_translation(
     mut query: Query<&mut Transform, (With<Text>, With<AnimateTranslation>)>,
 ) {
     for mut transform in &mut query {
-        transform.translation.x = 100.0 * time.elapsed_seconds().sin() - 400.0;
-        transform.translation.y = 100.0 * time.elapsed_seconds().cos();
+        transform.translation.x = 100.0 * ops::sin(time.elapsed_seconds()) - 400.0;
+        transform.translation.y = 100.0 * ops::cos(time.elapsed_seconds());
     }
 }
 
@@ -176,7 +185,7 @@ fn animate_rotation(
     mut query: Query<&mut Transform, (With<Text>, With<AnimateRotation>)>,
 ) {
     for mut transform in &mut query {
-        transform.rotation = Quat::from_rotation_z(time.elapsed_seconds().cos());
+        transform.rotation = Quat::from_rotation_z(ops::cos(time.elapsed_seconds()));
     }
 }
 
@@ -187,9 +196,7 @@ fn animate_scale(
     // Consider changing font-size instead of scaling the transform. Scaling a Text2D will scale the
     // rendered quad, resulting in a pixellated look.
     for mut transform in &mut query {
-        transform.translation = Vec3::new(400.0, 0.0, 0.0);
-
-        let scale = (time.elapsed_seconds().sin() + 1.1) * 2.0;
+        let scale = (ops::sin(time.elapsed_seconds()) + 1.1) * 2.0;
         transform.scale.x = scale;
         transform.scale.y = scale;
     }

@@ -42,13 +42,7 @@ fn setup(
         perceptual_roughness: 1.0,
         ..default()
     });
-    let sphere_handle = meshes.add(
-        Mesh::try_from(shape::Icosphere {
-            radius: sphere_radius,
-            ..default()
-        })
-        .unwrap(),
-    );
+    let sphere_handle = meshes.add(Sphere::new(sphere_radius));
 
     let light_transform = Transform::from_xyz(5.0, 5.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y);
     commands
@@ -60,26 +54,19 @@ fn setup(
             Lights,
         ))
         .with_children(|builder| {
-            builder.spawn(PointLightBundle {
-                point_light: PointLight {
-                    intensity: 0.0,
-                    range: spawn_plane_depth,
-                    color: Color::WHITE,
-                    shadow_depth_bias: 0.0,
-                    shadow_normal_bias: 0.0,
-                    shadows_enabled: true,
-                    ..default()
-                },
+            builder.spawn(PointLight {
+                intensity: 0.0,
+                range: spawn_plane_depth,
+                color: Color::WHITE,
+                shadow_depth_bias: 0.0,
+                shadow_normal_bias: 0.0,
+                shadows_enabled: true,
                 ..default()
             });
-            builder.spawn(DirectionalLightBundle {
-                directional_light: DirectionalLight {
-                    illuminance: 1500.0,
-                    shadow_depth_bias: 0.0,
-                    shadow_normal_bias: 0.0,
-                    shadows_enabled: true,
-                    ..default()
-                },
+            builder.spawn(DirectionalLight {
+                shadow_depth_bias: 0.0,
+                shadow_normal_bias: 0.0,
+                shadows_enabled: true,
                 ..default()
             });
         });
@@ -113,27 +100,28 @@ fn setup(
     }
 
     // ground plane
+    let plane_size = 2.0 * spawn_plane_depth;
     commands.spawn(PbrBundle {
-        mesh: meshes.add(shape::Plane::from_size(2.0 * spawn_plane_depth)),
+        mesh: meshes.add(Plane3d::default().mesh().size(plane_size, plane_size)),
         material: white_handle,
         ..default()
     });
 
-    let style = TextStyle {
-        font_size: 20.,
-        ..default()
-    };
+    let style = TextStyle::default();
+
     commands
-        .spawn(NodeBundle {
-            style: Style {
-                position_type: PositionType::Absolute,
-                padding: UiRect::all(Val::Px(5.0)),
+        .spawn((
+            NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    padding: UiRect::all(Val::Px(5.0)),
+                    ..default()
+                },
+                background_color: Color::BLACK.with_alpha(0.75).into(),
                 ..default()
             },
-            z_index: ZIndex::Global(i32::MAX),
-            background_color: Color::BLACK.with_a(0.75).into(),
-            ..default()
-        })
+            GlobalZIndex(i32::MAX),
+        ))
         .with_children(|c| {
             c.spawn(TextBundle::from_sections([
                 TextSection::new("Controls:\n", style.clone()),
@@ -258,14 +246,14 @@ fn cycle_filter_methods(
             let filter_method_string;
             *filter_method = match *filter_method {
                 ShadowFilteringMethod::Hardware2x2 => {
-                    filter_method_string = "Castano13".to_string();
-                    ShadowFilteringMethod::Castano13
+                    filter_method_string = "Gaussian".to_string();
+                    ShadowFilteringMethod::Gaussian
                 }
-                ShadowFilteringMethod::Castano13 => {
-                    filter_method_string = "Jimenez14".to_string();
-                    ShadowFilteringMethod::Jimenez14
+                ShadowFilteringMethod::Gaussian => {
+                    filter_method_string = "Temporal".to_string();
+                    ShadowFilteringMethod::Temporal
                 }
-                ShadowFilteringMethod::Jimenez14 => {
+                ShadowFilteringMethod::Temporal => {
                     filter_method_string = "Hardware2x2".to_string();
                     ShadowFilteringMethod::Hardware2x2
                 }

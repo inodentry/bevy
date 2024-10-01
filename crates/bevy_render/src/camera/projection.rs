@@ -1,31 +1,24 @@
-use std::marker::PhantomData;
-use std::ops::{Div, DivAssign, Mul, MulAssign};
+use core::{
+    marker::PhantomData,
+    ops::{Div, DivAssign, Mul, MulAssign},
+};
 
-use crate::primitives::Frustum;
+use crate::{primitives::Frustum, view::VisibilitySystems};
 use bevy_app::{App, Plugin, PostStartup, PostUpdate};
-use bevy_ecs::{prelude::*, reflect::ReflectComponent};
-use bevy_math::{AspectRatio, Mat4, Rect, Vec2, Vec3A};
+use bevy_ecs::prelude::*;
+use bevy_math::{ops, AspectRatio, Mat4, Rect, Vec2, Vec3A, Vec4};
 use bevy_reflect::{
     std_traits::ReflectDefault, GetTypeRegistration, Reflect, ReflectDeserialize, ReflectSerialize,
 };
-use bevy_transform::components::GlobalTransform;
+use bevy_transform::{components::GlobalTransform, TransformSystem};
 use serde::{Deserialize, Serialize};
 
 /// Adds [`Camera`](crate::camera::Camera) driver systems for a given projection type.
-pub struct CameraProjectionPlugin<T: CameraProjection>(PhantomData<T>);
-
-impl<T: CameraProjection> Default for CameraProjectionPlugin<T> {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
-
-/// Label for [`camera_system<T>`], shared across all `T`.
 ///
-/// [`camera_system<T>`]: crate::camera::camera_system
-#[derive(SystemSet, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct CameraUpdateSystem;
-
+/// If you are using `bevy_pbr`, then you need to add `PbrProjectionPlugin` along with this.
+pub struct CameraProjectionPlugin<T: CameraProjection + Component + GetTypeRegistration>(
+    PhantomData<T>,
+);
 impl<T: CameraProjection + Component + GetTypeRegistration> Plugin for CameraProjectionPlugin<T> {
     fn build(&self, app: &mut App) {
         app.register_type::<T>()
@@ -40,15 +33,36 @@ impl<T: CameraProjection + Component + GetTypeRegistration> Plugin for CameraPro
             )
             .add_systems(
                 PostUpdate,
-                crate::camera::camera_system::<T>
-                    .in_set(CameraUpdateSystem)
-                    // We assume that each camera will only have one projection,
-                    // so we can ignore ambiguities with all other monomorphizations.
-                    // FIXME: Add an archetype invariant for this https://github.com/bevyengine/bevy/issues/1481.
-                    .ambiguous_with(CameraUpdateSystem),
+                (
+                    crate::camera::camera_system::<T>
+                        .in_set(CameraUpdateSystem)
+                        // We assume that each camera will only have one projection,
+                        // so we can ignore ambiguities with all other monomorphizations.
+                        // FIXME: Add an archetype invariant for this https://github.com/bevyengine/bevy/issues/1481.
+                        .ambiguous_with(CameraUpdateSystem),
+                    crate::view::update_frusta::<T>
+                        .in_set(VisibilitySystems::UpdateFrusta)
+                        .after(crate::camera::camera_system::<T>)
+                        .after(TransformSystem::TransformPropagate)
+                        // We assume that no camera will have more than one projection component,
+                        // so these systems will run independently of one another.
+                        // FIXME: Add an archetype invariant for this https://github.com/bevyengine/bevy/issues/1481.
+                        .ambiguous_with(VisibilitySystems::UpdateFrusta),
+                ),
             );
     }
 }
+impl<T: CameraProjection + Component + GetTypeRegistration> Default for CameraProjectionPlugin<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+/// Label for [`camera_system<T>`], shared across all `T`.
+///
+/// [`camera_system<T>`]: crate::camera::camera_system
+#[derive(SystemSet, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct CameraUpdateSystem;
 
 /// Trait to control the projection matrix of a camera.
 ///
@@ -56,9 +70,13 @@ impl<T: CameraProjection + Component + GetTypeRegistration> Plugin for CameraPro
 /// to recompute the camera projection matrix of the [`Camera`] component attached to
 /// the same entity as the component implementing this trait.
 ///
+/// Use the plugins [`CameraProjectionPlugin`] and `bevy::pbr::PbrProjectionPlugin` to setup the
+/// systems for your [`CameraProjection`] implementation.
+///
 /// [`Camera`]: crate::camera::Camera
 pub trait CameraProjection {
-    fn get_projection_matrix(&self) -> Mat4;
+    fn get_clip_from_view(&self) -> Mat4;
+    fn get_clip_from_view_for_sub(&self, sub_view: &super::SubCameraView) -> Mat4;
     fn update(&mut self, width: f32, height: f32);
     fn far(&self) -> f32;
     fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [Vec3A; 8];
@@ -68,10 +86,10 @@ pub trait CameraProjection {
     /// This code is called by [`update_frusta`](crate::view::visibility::update_frusta) system
     /// for each camera to update its frustum.
     fn compute_frustum(&self, camera_transform: &GlobalTransform) -> Frustum {
-        let view_projection =
-            self.get_projection_matrix() * camera_transform.compute_matrix().inverse();
-        Frustum::from_view_projection_custom_far(
-            &view_projection,
+        let clip_from_world =
+            self.get_clip_from_view() * camera_transform.compute_matrix().inverse();
+        Frustum::from_clip_from_world_custom_far(
+            &clip_from_world,
             &camera_transform.translation(),
             &camera_transform.back(),
             self.far(),
@@ -81,7 +99,7 @@ pub trait CameraProjection {
 
 /// A configurable [`CameraProjection`] that can select its projection type at runtime.
 #[derive(Component, Debug, Clone, Reflect)]
-#[reflect(Component, Default)]
+#[reflect(Component, Default, Debug)]
 pub enum Projection {
     Perspective(PerspectiveProjection),
     Orthographic(OrthographicProjection),
@@ -100,10 +118,17 @@ impl From<OrthographicProjection> for Projection {
 }
 
 impl CameraProjection for Projection {
-    fn get_projection_matrix(&self) -> Mat4 {
+    fn get_clip_from_view(&self) -> Mat4 {
         match self {
-            Projection::Perspective(projection) => projection.get_projection_matrix(),
-            Projection::Orthographic(projection) => projection.get_projection_matrix(),
+            Projection::Perspective(projection) => projection.get_clip_from_view(),
+            Projection::Orthographic(projection) => projection.get_clip_from_view(),
+        }
+    }
+
+    fn get_clip_from_view_for_sub(&self, sub_view: &super::SubCameraView) -> Mat4 {
+        match self {
+            Projection::Perspective(projection) => projection.get_clip_from_view_for_sub(sub_view),
+            Projection::Orthographic(projection) => projection.get_clip_from_view_for_sub(sub_view),
         }
     }
 
@@ -137,7 +162,7 @@ impl Default for Projection {
 
 /// A 3D camera projection in which distant objects appear smaller than close objects.
 #[derive(Component, Debug, Clone, Reflect)]
-#[reflect(Component, Default)]
+#[reflect(Component, Default, Debug)]
 pub struct PerspectiveProjection {
     /// The vertical field of view (FOV) in radians.
     ///
@@ -168,12 +193,53 @@ pub struct PerspectiveProjection {
 }
 
 impl CameraProjection for PerspectiveProjection {
-    fn get_projection_matrix(&self) -> Mat4 {
+    fn get_clip_from_view(&self) -> Mat4 {
         Mat4::perspective_infinite_reverse_rh(self.fov, self.aspect_ratio, self.near)
     }
 
+    fn get_clip_from_view_for_sub(&self, sub_view: &super::SubCameraView) -> Mat4 {
+        let full_width = sub_view.full_size.x as f32;
+        let full_height = sub_view.full_size.y as f32;
+        let sub_width = sub_view.size.x as f32;
+        let sub_height = sub_view.size.y as f32;
+        let offset_x = sub_view.offset.x;
+        // Y-axis increases from top to bottom
+        let offset_y = full_height - (sub_view.offset.y + sub_height);
+
+        // Original frustum parameters
+        let top = self.near * ops::tan(0.5 * self.fov);
+        let bottom = -top;
+        let right = top * self.aspect_ratio;
+        let left = -right;
+
+        // Calculate scaling factors
+        let width = right - left;
+        let height = top - bottom;
+
+        // Calculate the new frustum parameters
+        let left_prime = left + (width * offset_x) / full_width;
+        let right_prime = left + (width * (offset_x + sub_width)) / full_width;
+        let bottom_prime = bottom + (height * offset_y) / full_height;
+        let top_prime = bottom + (height * (offset_y + sub_height)) / full_height;
+
+        // Compute the new projection matrix
+        let x = (2.0 * self.near) / (right_prime - left_prime);
+        let y = (2.0 * self.near) / (top_prime - bottom_prime);
+        let a = (right_prime + left_prime) / (right_prime - left_prime);
+        let b = (top_prime + bottom_prime) / (top_prime - bottom_prime);
+
+        Mat4::from_cols(
+            Vec4::new(x, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, y, 0.0, 0.0),
+            Vec4::new(a, b, 0.0, -1.0),
+            Vec4::new(0.0, 0.0, self.near, 0.0),
+        )
+    }
+
     fn update(&mut self, width: f32, height: f32) {
-        self.aspect_ratio = AspectRatio::new(width, height).into();
+        self.aspect_ratio = AspectRatio::try_new(width, height)
+            .expect("Failed to update PerspectiveProjection: width and height must be positive, non-zero values")
+            .ratio();
     }
 
     fn far(&self) -> f32 {
@@ -181,7 +247,7 @@ impl CameraProjection for PerspectiveProjection {
     }
 
     fn get_frustum_corners(&self, z_near: f32, z_far: f32) -> [Vec3A; 8] {
-        let tan_half_fov = (self.fov / 2.).tan();
+        let tan_half_fov = ops::tan(self.fov / 2.);
         let a = z_near.abs() * tan_half_fov;
         let b = z_far.abs() * tan_half_fov;
         let aspect_ratio = self.aspect_ratio;
@@ -202,7 +268,7 @@ impl CameraProjection for PerspectiveProjection {
 impl Default for PerspectiveProjection {
     fn default() -> Self {
         PerspectiveProjection {
-            fov: std::f32::consts::PI / 4.0,
+            fov: core::f32::consts::PI / 4.0,
             near: 0.1,
             far: 1000.0,
             aspect_ratio: 1.0,
@@ -220,7 +286,7 @@ impl Default for PerspectiveProjection {
 /// # use bevy_render::camera::{OrthographicProjection, Projection, ScalingMode};
 /// let projection = Projection::Orthographic(OrthographicProjection {
 ///    scaling_mode: ScalingMode::FixedVertical(2.0),
-///    ..OrthographicProjection::default()
+///    ..OrthographicProjection::default_2d()
 /// });
 /// ```
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize)]
@@ -317,11 +383,11 @@ impl DivAssign<f32> for ScalingMode {
 /// # use bevy_render::camera::{OrthographicProjection, Projection, ScalingMode};
 /// let projection = Projection::Orthographic(OrthographicProjection {
 ///     scaling_mode: ScalingMode::WindowSize(100.0),
-///     ..OrthographicProjection::default()
+///     ..OrthographicProjection::default_2d()
 /// });
 /// ```
 #[derive(Component, Debug, Clone, Reflect)]
-#[reflect(Component, Default)]
+#[reflect(Component, Debug, FromWorld)]
 pub struct OrthographicProjection {
     /// The distance of the near clipping plane in world units.
     ///
@@ -352,17 +418,6 @@ pub struct OrthographicProjection {
     ///
     /// Defaults to `ScalingMode::WindowSize(1.0)`
     pub scaling_mode: ScalingMode,
-    /// Scales the projection.
-    ///
-    /// As scale increases, the apparent size of objects decreases, and vice versa.
-    ///
-    /// Note: scaling can be set by [`scaling_mode`](Self::scaling_mode) as well.
-    /// This parameter scales on top of that.
-    ///
-    /// This property is particularly useful in implementing zoom functionality.
-    ///
-    /// Defaults to `1.0`.
-    pub scale: f32,
     /// The area that the projection covers relative to `viewport_origin`.
     ///
     /// Bevy's [`camera_system`](crate::camera::camera_system) automatically
@@ -374,12 +429,48 @@ pub struct OrthographicProjection {
 }
 
 impl CameraProjection for OrthographicProjection {
-    fn get_projection_matrix(&self) -> Mat4 {
+    fn get_clip_from_view(&self) -> Mat4 {
         Mat4::orthographic_rh(
             self.area.min.x,
             self.area.max.x,
             self.area.min.y,
             self.area.max.y,
+            // NOTE: near and far are swapped to invert the depth range from [0,1] to [1,0]
+            // This is for interoperability with pipelines using infinite reverse perspective projections.
+            self.far,
+            self.near,
+        )
+    }
+
+    fn get_clip_from_view_for_sub(&self, sub_view: &super::SubCameraView) -> Mat4 {
+        let full_width = sub_view.full_size.x as f32;
+        let full_height = sub_view.full_size.y as f32;
+        let offset_x = sub_view.offset.x;
+        let offset_y = sub_view.offset.y;
+        let sub_width = sub_view.size.x as f32;
+        let sub_height = sub_view.size.y as f32;
+
+        // Orthographic projection parameters
+        let top = self.area.max.y;
+        let bottom = self.area.min.y;
+        let right = self.area.max.x;
+        let left = self.area.min.x;
+
+        // Calculate scaling factors
+        let scale_w = (right - left) / full_width;
+        let scale_h = (top - bottom) / full_height;
+
+        // Calculate the new orthographic bounds
+        let left_prime = left + scale_w * offset_x;
+        let right_prime = left_prime + scale_w * sub_width;
+        let top_prime = top - scale_h * offset_y;
+        let bottom_prime = top_prime - scale_h * sub_height;
+
+        Mat4::orthographic_rh(
+            left_prime,
+            right_prime,
+            bottom_prime,
+            top_prime,
             // NOTE: near and far are swapped to invert the depth range from [0,1] to [1,0]
             // This is for interoperability with pipelines using infinite reverse perspective projections.
             self.far,
@@ -423,14 +514,22 @@ impl CameraProjection for OrthographicProjection {
             ScalingMode::Fixed { width, height } => (width, height),
         };
 
-        let origin_x = projection_width * self.viewport_origin.x;
-        let origin_y = projection_height * self.viewport_origin.y;
+        let mut origin_x = projection_width * self.viewport_origin.x;
+        let mut origin_y = projection_height * self.viewport_origin.y;
+
+        // If projection is based on window pixels,
+        // ensure we don't end up with fractional pixels!
+        if let ScalingMode::WindowSize(pixel_scale) = self.scaling_mode {
+            // round to nearest multiple of `pixel_scale`
+            origin_x = (origin_x * pixel_scale).round() / pixel_scale;
+            origin_y = (origin_y * pixel_scale).round() / pixel_scale;
+        }
 
         self.area = Rect::new(
-            self.scale * -origin_x,
-            self.scale * -origin_y,
-            self.scale * (projection_width - origin_x),
-            self.scale * (projection_height - origin_y),
+            -origin_x,
+            -origin_y,
+            projection_width - origin_x,
+            projection_height - origin_y,
         );
     }
 
@@ -454,10 +553,30 @@ impl CameraProjection for OrthographicProjection {
     }
 }
 
-impl Default for OrthographicProjection {
-    fn default() -> Self {
+impl FromWorld for OrthographicProjection {
+    fn from_world(_world: &mut World) -> Self {
+        OrthographicProjection::default_3d()
+    }
+}
+
+impl OrthographicProjection {
+    /// Returns the default orthographic projection for a 2D context.
+    ///
+    /// The near plane is set to a negative value so that the camera can still
+    /// render the scene when using positive z coordinates to order foreground elements.
+    pub fn default_2d() -> Self {
         OrthographicProjection {
-            scale: 1.0,
+            near: -1000.0,
+            ..OrthographicProjection::default_3d()
+        }
+    }
+
+    /// Returns the default orthographic projection for a 3D context.
+    ///
+    /// The near plane is set to 0.0 so that the camera doesn't render
+    /// objects that are behind it.
+    pub fn default_3d() -> Self {
+        OrthographicProjection {
             near: 0.0,
             far: 1000.0,
             viewport_origin: Vec2::new(0.5, 0.5),

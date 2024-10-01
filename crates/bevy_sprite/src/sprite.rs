@@ -1,7 +1,7 @@
+use bevy_color::Color;
 use bevy_ecs::{component::Component, reflect::ReflectComponent};
 use bevy_math::{Rect, Vec2};
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
-use bevy_render::color::Color;
 
 use crate::TextureSlicer;
 
@@ -9,8 +9,7 @@ use crate::TextureSlicer;
 ///
 /// This is commonly used as a component within [`SpriteBundle`](crate::bundle::SpriteBundle).
 #[derive(Component, Debug, Default, Clone, Reflect)]
-#[reflect(Component, Default)]
-#[repr(C)]
+#[reflect(Component, Default, Debug)]
 pub struct Sprite {
     /// The sprite's color tint
     pub color: Color,
@@ -31,13 +30,20 @@ pub struct Sprite {
     pub anchor: Anchor,
 }
 
+impl Sprite {
+    /// Create a Sprite with a custom size
+    pub fn sized(custom_size: Vec2) -> Self {
+        Sprite {
+            custom_size: Some(custom_size),
+            ..Default::default()
+        }
+    }
+}
+
 /// Controls how the image is altered when scaled.
-#[derive(Component, Debug, Default, Clone, Reflect)]
-#[reflect(Component, Default)]
+#[derive(Component, Debug, Clone, Reflect)]
+#[reflect(Component, Debug)]
 pub enum ImageScaleMode {
-    /// The entire texture stretches when its dimensions change. This is the default option.
-    #[default]
-    Stretched,
     /// The texture will be cut in 9 slices, keeping the texture in proportions on resize
     Sliced(TextureSlicer),
     /// The texture will be repeated if stretched beyond `stretched_value`
@@ -55,6 +61,7 @@ pub enum ImageScaleMode {
 /// How a sprite is positioned relative to its [`Transform`](bevy_transform::components::Transform).
 /// It defaults to `Anchor::Center`.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Default, Reflect)]
+#[reflect(Component, Default, Debug, PartialEq)]
 #[doc(alias = "pivot")]
 pub enum Anchor {
     #[default]

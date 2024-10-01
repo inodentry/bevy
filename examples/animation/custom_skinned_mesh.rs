@@ -4,7 +4,7 @@
 use std::f32::consts::*;
 
 use bevy::{
-    pbr::AmbientLight,
+    math::ops,
     prelude::*,
     render::{
         mesh::{
@@ -14,13 +14,14 @@ use bevy::{
         render_asset::RenderAssetUsages,
     },
 };
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .insert_resource(AmbientLight {
-            brightness: 150.0,
+            brightness: 3000.0,
             ..default()
         })
         .add_systems(Startup, setup)
@@ -116,29 +117,25 @@ fn setup(
     )
     // Tell bevy to construct triangles from a list of vertex indices,
     //  where each 3 vertex indices form an triangle.
-    .with_indices(Some(Indices::U16(vec![
+    .with_inserted_indices(Indices::U16(vec![
         0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4, 4, 5, 7, 4, 7, 6, 6, 7, 9, 6, 9, 8,
-    ])));
+    ]));
 
     let mesh = meshes.add(mesh);
 
-    let mut rng = StdRng::seed_from_u64(42);
+    // We're seeding the PRNG here to make this example deterministic for testing purposes.
+    // This isn't strictly required in practical use unless you need your app to be deterministic.
+    let mut rng = ChaCha8Rng::seed_from_u64(42);
 
     for i in -5..5 {
         // Create joint entities
         let joint_0 = commands
-            .spawn(TransformBundle::from(Transform::from_xyz(
-                i as f32 * 1.5,
-                0.0,
-                i as f32 * 0.1,
-            )))
+            .spawn(Transform::from_xyz(i as f32 * 1.5, 0.0, i as f32 * 0.1))
             .id();
-        let joint_1 = commands
-            .spawn((AnimatedJoint, TransformBundle::IDENTITY))
-            .id();
+        let joint_1 = commands.spawn((AnimatedJoint, Transform::IDENTITY)).id();
 
         // Set joint_1 as a child of joint_0.
-        commands.entity(joint_0).push_children(&[joint_1]);
+        commands.entity(joint_0).add_children(&[joint_1]);
 
         // Each joint in this vector corresponds to each inverse bindpose matrix in `SkinnedMeshInverseBindposes`.
         let joint_entities = vec![joint_0, joint_1];
@@ -147,7 +144,7 @@ fn setup(
         commands.spawn((
             PbrBundle {
                 mesh: mesh.clone(),
-                material: materials.add(Color::rgb(
+                material: materials.add(Color::srgb(
                     rng.gen_range(0.0..1.0),
                     rng.gen_range(0.0..1.0),
                     rng.gen_range(0.0..1.0),
@@ -165,6 +162,6 @@ fn setup(
 /// Animate the joint marked with [`AnimatedJoint`] component.
 fn joint_animation(time: Res<Time>, mut query: Query<&mut Transform, With<AnimatedJoint>>) {
     for mut transform in &mut query {
-        transform.rotation = Quat::from_rotation_z(FRAC_PI_2 * time.elapsed_seconds().sin());
+        transform.rotation = Quat::from_rotation_z(FRAC_PI_2 * ops::sin(time.elapsed_seconds()));
     }
 }

@@ -1,16 +1,16 @@
+use core::any::TypeId;
 use fixedbitset::FixedBitSet;
-use std::any::TypeId;
 use std::collections::HashMap;
 
 use crate::{
     schedule::{InternedScheduleLabel, NodeId, Schedule, ScheduleLabel},
-    system::{IntoSystem, ResMut, Resource, System},
+    system::{IntoSystem, ResMut, Resource},
 };
 use bevy_utils::{
-    thiserror::Error,
     tracing::{error, info, warn},
     TypeIdMap,
 };
+use thiserror::Error;
 
 #[cfg(test)]
 use bevy_utils::tracing::debug;
@@ -58,7 +58,7 @@ enum SystemBehavior {
 // schedule_order index, and schedule start point
 #[derive(Debug, Default, Clone, Copy)]
 struct Cursor {
-    /// index within Stepping.schedule_order
+    /// index within `Stepping::schedule_order`
     pub schedule: usize,
     /// index within the schedule's system list
     pub system: usize,
@@ -113,8 +113,8 @@ pub struct Stepping {
     updates: Vec<Update>,
 }
 
-impl std::fmt::Debug for Stepping {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Stepping {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "Stepping {{ action: {:?}, schedules: {:?}, order: {:?}",
@@ -252,10 +252,7 @@ impl Stepping {
         schedule: impl ScheduleLabel,
         system: impl IntoSystem<(), (), Marker>,
     ) -> &mut Self {
-        // PERF: ideally we don't actually need to construct the system to retrieve the TypeId.
-        // Unfortunately currently IntoSystem::into_system(system).type_id() != TypeId::of::<I::System>()
-        // If these are aligned, we can use TypeId::of::<I::System>() here
-        let type_id = IntoSystem::into_system(system).type_id();
+        let type_id = system.system_type_id();
         self.updates.push(Update::SetBehavior(
             schedule.intern(),
             SystemIdentifier::Type(type_id),
@@ -281,7 +278,7 @@ impl Stepping {
         schedule: impl ScheduleLabel,
         system: impl IntoSystem<(), (), Marker>,
     ) -> &mut Self {
-        let type_id = IntoSystem::into_system(system).type_id();
+        let type_id = system.system_type_id();
         self.updates.push(Update::SetBehavior(
             schedule.intern(),
             SystemIdentifier::Type(type_id),
@@ -307,7 +304,7 @@ impl Stepping {
         schedule: impl ScheduleLabel,
         system: impl IntoSystem<(), (), Marker>,
     ) -> &mut Self {
-        let type_id = IntoSystem::into_system(system).type_id();
+        let type_id = system.system_type_id();
         self.updates.push(Update::SetBehavior(
             schedule.intern(),
             SystemIdentifier::Type(type_id),
@@ -354,7 +351,7 @@ impl Stepping {
         schedule: impl ScheduleLabel,
         system: impl IntoSystem<(), (), Marker>,
     ) -> &mut Self {
-        let type_id = IntoSystem::into_system(system).type_id();
+        let type_id = system.system_type_id();
         self.updates.push(Update::ClearBehavior(
             schedule.intern(),
             SystemIdentifier::Type(type_id),
@@ -609,11 +606,11 @@ struct ScheduleState {
     /// per-system [`SystemBehavior`]
     behaviors: HashMap<NodeId, SystemBehavior>,
 
-    /// order of NodeIds in the schedule
+    /// order of [`NodeId`]s in the schedule
     ///
-    /// This is a cached copy of SystemExecutable.system_ids. We need it
-    /// available here to be accessed by Stepping::cursor() so we can return
-    /// NodeIds to the caller.
+    /// This is a cached copy of `SystemExecutable::system_ids`. We need it
+    /// available here to be accessed by [`Stepping::cursor()`] so we can return
+    /// [`NodeId`]s to the caller.
     node_ids: Vec<NodeId>,
 
     /// changes to system behavior that should be applied the next time
@@ -694,12 +691,12 @@ impl ScheduleState {
         start: usize,
         mut action: Action,
     ) -> (FixedBitSet, Option<usize>) {
-        use std::cmp::Ordering;
+        use core::cmp::Ordering;
 
         // if our NodeId list hasn't been populated, copy it over from the
         // schedule
         if self.node_ids.len() != schedule.systems_len() {
-            self.node_ids = schedule.executable().system_ids.clone();
+            self.node_ids.clone_from(&schedule.executable().system_ids);
         }
 
         // Now that we have the schedule, apply any pending system behavior
@@ -830,8 +827,7 @@ impl ScheduleState {
 #[cfg(all(test, feature = "bevy_debug_stepping"))]
 mod tests {
     use super::*;
-    use crate::prelude::*;
-    use crate::{schedule::ScheduleLabel, world::World};
+    use crate::{prelude::*, schedule::ScheduleLabel};
 
     pub use crate as bevy_ecs;
 
@@ -871,7 +867,7 @@ mod tests {
             let systems: &Vec<&str> = $system_names;
 
             if (actual != expected) {
-                use std::fmt::Write as _;
+                use core::fmt::Write as _;
 
                 // mismatch, let's construct a human-readable message of what
                 // was returned
@@ -903,7 +899,7 @@ mod tests {
         ($schedule:expr, $skipped_systems:expr, $($system:expr),*) => {
             // pull an ordered list of systems in the schedule, and save the
             // system TypeId, and name.
-            let systems: Vec<(TypeId, std::borrow::Cow<'static, str>)> = $schedule.systems().unwrap()
+            let systems: Vec<(TypeId, alloc::borrow::Cow<'static, str>)> = $schedule.systems().unwrap()
                 .map(|(_, system)| {
                     (system.type_id(), system.name())
                 })

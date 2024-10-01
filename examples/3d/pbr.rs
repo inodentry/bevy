@@ -1,6 +1,6 @@
 //! This example shows how to configure Physically Based Rendering (PBR) parameters.
 
-use bevy::{asset::LoadState, prelude::*};
+use bevy::{asset::LoadState, prelude::*, render::camera::ScalingMode};
 
 fn main() {
     App::new()
@@ -17,13 +17,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    let sphere_mesh = meshes.add(
-        Mesh::try_from(shape::Icosphere {
-            radius: 0.45,
-            ..default()
-        })
-        .unwrap(),
-    );
+    let sphere_mesh = meshes.add(Sphere::new(0.45));
     // add entities to the world
     for y in -2..=2 {
         for x in -5..=5 {
@@ -33,7 +27,7 @@ fn setup(
             commands.spawn(PbrBundle {
                 mesh: sphere_mesh.clone(),
                 material: materials.add(StandardMaterial {
-                    base_color: Color::hex("#ffd891").unwrap(),
+                    base_color: Srgba::hex("#ffd891").unwrap().into(),
                     // vary key PBR parameters on a grid of spheres to show the effect
                     metallic: y01,
                     perceptual_roughness: x01,
@@ -48,7 +42,7 @@ fn setup(
     commands.spawn(PbrBundle {
         mesh: sphere_mesh,
         material: materials.add(StandardMaterial {
-            base_color: Color::hex("#ffd891").unwrap(),
+            base_color: Srgba::hex("#ffd891").unwrap().into(),
             // vary key PBR parameters on a grid of spheres to show the effect
             unlit: true,
             ..default()
@@ -57,23 +51,20 @@ fn setup(
         ..default()
     });
 
-    // light
-    commands.spawn(PointLightBundle {
-        transform: Transform::from_xyz(50.0, 50.0, 50.0),
-        point_light: PointLight {
-            intensity: 100_000_000.,
-            range: 100.,
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 1_500.,
             ..default()
         },
-        ..default()
-    });
+        Transform::from_xyz(50.0, 50.0, 50.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
 
     // labels
     commands.spawn(
         TextBundle::from_section(
             "Perceptual Roughness",
             TextStyle {
-                font_size: 36.0,
+                font_size: 30.0,
                 ..default()
             },
         )
@@ -89,7 +80,7 @@ fn setup(
         text: Text::from_section(
             "Metallic",
             TextStyle {
-                font_size: 36.0,
+                font_size: 30.0,
                 ..default()
             },
         ),
@@ -110,8 +101,7 @@ fn setup(
         TextBundle::from_section(
             "Loading Environment Map...",
             TextStyle {
-                font_size: 36.0,
-                color: Color::RED,
+                font_size: 30.0,
                 ..default()
             },
         )
@@ -129,8 +119,8 @@ fn setup(
         Camera3dBundle {
             transform: Transform::from_xyz(0.0, 0.0, 8.0).looking_at(Vec3::default(), Vec3::Y),
             projection: OrthographicProjection {
-                scale: 0.01,
-                ..default()
+                scaling_mode: ScalingMode::WindowSize(100.0),
+                ..OrthographicProjection::default_3d()
             }
             .into(),
             ..default()
@@ -138,7 +128,8 @@ fn setup(
         EnvironmentMapLight {
             diffuse_map: asset_server.load("environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
             specular_map: asset_server.load("environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
-            intensity: 150.0,
+            intensity: 900.0,
+            ..default()
         },
     ));
 }

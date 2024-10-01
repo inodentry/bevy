@@ -1,12 +1,17 @@
 #[cfg(feature = "trace")]
 use bevy_utils::tracing::info_span;
+use core::panic::AssertUnwindSafe;
 use fixedbitset::FixedBitSet;
-use std::panic::AssertUnwindSafe;
 
 use crate::{
-    schedule::{BoxedCondition, ExecutorKind, SystemExecutor, SystemSchedule},
+    schedule::{
+        executor::is_apply_deferred, BoxedCondition, ExecutorKind, SystemExecutor, SystemSchedule,
+    },
+    warn_system_skipped,
     world::World,
 };
+
+use super::__rust_begin_short_backtrace;
 
 /// A variant of [`SingleThreadedExecutor`](crate::schedule::SingleThreadedExecutor) that calls
 /// [`apply_deferred`](crate::system::System::apply_deferred) immediately after running each system.
@@ -33,15 +38,15 @@ impl SystemExecutor for SimpleExecutor {
     fn run(
         &mut self,
         schedule: &mut SystemSchedule,
-        _skip_systems: Option<FixedBitSet>,
         world: &mut World,
+        _skip_systems: Option<&FixedBitSet>,
     ) {
         // If stepping is enabled, make sure we skip those systems that should
         // not be run.
         #[cfg(feature = "bevy_debug_stepping")]
         if let Some(skipped_systems) = _skip_systems {
             // mark skipped systems as completed
-            self.completed_systems |= &skipped_systems;
+            self.completed_systems |= skipped_systems;
         }
 
         for system_index in 0..schedule.systems.len() {
@@ -75,6 +80,15 @@ impl SystemExecutor for SimpleExecutor {
 
             should_run &= system_conditions_met;
 
+            let system = &mut schedule.systems[system_index];
+            if should_run {
+                let valid_params = system.validate_param(world);
+                if !valid_params {
+                    warn_system_skipped!("System", system.name());
+                }
+                should_run &= valid_params;
+            }
+
             #[cfg(feature = "trace")]
             should_run_span.exit();
 
@@ -85,16 +99,17 @@ impl SystemExecutor for SimpleExecutor {
                 continue;
             }
 
-            let system = &mut schedule.systems[system_index];
+            if is_apply_deferred(system) {
+                continue;
+            }
+
             let res = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                system.run((), world);
+                __rust_begin_short_backtrace::run(&mut **system, world);
             }));
             if let Err(payload) = res {
                 eprintln!("Encountered a panic in system `{}`!", &*system.name());
                 std::panic::resume_unwind(payload);
             }
-
-            system.apply_deferred(world);
         }
 
         self.evaluated_sets.clear();
@@ -122,6 +137,25 @@ fn evaluate_and_fold_conditions(conditions: &mut [BoxedCondition], world: &mut W
     #[allow(clippy::unnecessary_fold)]
     conditions
         .iter_mut()
-        .map(|condition| condition.run((), world))
+        .map(|condition| {
+            if !condition.validate_param(world) {
+                warn_system_skipped!("Condition", condition.name());
+                return false;
+            }
+            __rust_begin_short_backtrace::readonly_run(&mut **condition, world)
+        })
         .fold(true, |acc, res| acc && res)
+}
+
+#[cfg(test)]
+#[test]
+fn skip_automatic_sync_points() {
+    // Schedules automatically insert apply_deferred systems, but these should
+    // not be executed as they only serve as markers and are not initialized
+    use crate::prelude::*;
+    let mut sched = Schedule::default();
+    sched.set_executor_kind(ExecutorKind::Simple);
+    sched.add_systems((|_: Commands| (), || ()).chain());
+    let mut world = World::new();
+    sched.run(&mut world);
 }
