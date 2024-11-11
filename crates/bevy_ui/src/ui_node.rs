@@ -258,6 +258,14 @@ impl From<&Vec2> for ScrollPosition {
     }
 }
 
+#[cfg(feature = "bevy_ui_picking_backend")]
+fn node_picking_behavior() -> bevy_picking::PickingBehavior {
+    bevy_picking::PickingBehavior {
+        should_block_lower: false,
+        is_hoverable: true,
+    }
+}
+
 /// The base component for UI entities. It describes UI layout and style properties.
 ///
 /// When defining new types of UI entities, require [`Node`] to make them behave like UI nodes.
@@ -294,6 +302,10 @@ impl From<&Vec2> for ScrollPosition {
     Transform,
     Visibility,
     ZIndex
+)]
+#[cfg_attr(
+    feature = "bevy_ui_picking_backend",
+    require(bevy_picking::PickingBehavior(node_picking_behavior))
 )]
 #[reflect(Component, Default, PartialEq, Debug)]
 #[cfg_attr(
